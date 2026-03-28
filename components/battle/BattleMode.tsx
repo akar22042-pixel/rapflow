@@ -10,7 +10,7 @@ interface BattleRoom {
   name: string;
   bpm: number;
   style: string;
-  status: string; // "waiting" | "active" | "finished"
+  status: string;
   player1_name: string | null;
   player2_name: string | null;
   topic: string | null;
@@ -46,6 +46,14 @@ interface JudgeResult {
   judgeComment: string;
 }
 
+// Solo mode local line
+interface SoloLine {
+  player: string;
+  content: string;
+  syllable_count: number;
+  round_number: number;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const LS_USERNAME = "rapflow_username";
 const MAX_ROUNDS  = 3;
@@ -73,18 +81,21 @@ export default function BattleMode() {
   const { currentBPM, setCurrentBPM, currentStyle, setCurrentStyle } = useMusicContext();
 
   // Username
-  const [username, setUsername]     = useState("");
-  const [nameInput, setNameInput]   = useState("");
-  const [nameReady, setNameReady]   = useState(false);
+  const [username, setUsername]   = useState("");
+  const [nameInput, setNameInput] = useState("");
+  const [nameReady, setNameReady] = useState(false);
 
-  // View: "rooms" | "waiting" | "battle" | "results"
-  type View = "rooms" | "waiting" | "battle" | "results";
-  const [view, setView]             = useState<View>("rooms");
-  const [room, setRoom]             = useState<BattleRoom | null>(null);
-  const [lines, setLines]           = useState<BattleLine[]>([]);
-  const [scores, setScores]         = useState<BattleScore[]>([]);
-  const [rooms, setRooms]           = useState<BattleRoom[]>([]);
+  // View: "rooms" | "waiting" | "battle" | "results" | "solo" | "solo_results"
+  type View = "rooms" | "waiting" | "battle" | "results" | "solo" | "solo_results";
+  const [view, setView]           = useState<View>("rooms");
+
+  // Multiplayer state
+  const [room, setRoom]           = useState<BattleRoom | null>(null);
+  const [lines, setLines]         = useState<BattleLine[]>([]);
+  const [scores, setScores]       = useState<BattleScore[]>([]);
+  const [rooms, setRooms]         = useState<BattleRoom[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
+  const [submitError, setSubmitError]   = useState<string | null>(null);
 
   // Create form
   const [showCreate, setShowCreate] = useState(false);
@@ -95,11 +106,30 @@ export default function BattleMode() {
   const [creating, setCreating]     = useState(false);
 
   // Battle input
-  const [inputLine, setInputLine]   = useState("");
+  const [inputLine, setInputLine] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [judging, setJudging]       = useState(false);
   const [judgeError, setJudgeError] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+
+  // ── Solo Test Mode state
+  const [soloP1, setSoloP1]         = useState("MC-1");
+  const [soloP2, setSoloP2]         = useState("MC-2");
+  const [soloBPM, setSoloBPM]       = useState(currentBPM);
+  const [soloStyle, setSoloStyle]   = useState(currentStyle);
+  const [soloTopic, setSoloTopic]   = useState("");
+  const [soloLines, setSoloLines]   = useState<SoloLine[]>([]);
+  const [soloInput, setSoloInput]   = useState("");
+  const [soloJudging, setSoloJudging] = useState(false);
+  const [soloJudgeError, setSoloJudgeError] = useState<string | null>(null);
+  const [soloResult, setSoloResult] = useState<JudgeResult | null>(null);
+  const [showSoloSetup, setShowSoloSetup] = useState(false);
+  const soloFeedRef = useRef<HTMLDivElement>(null);
+
+  // Derived solo state
+  const soloRound   = Math.floor(soloLines.length / 2) + 1;
+  const soloTurn    = soloLines.length % 2 === 0 ? soloP1 : soloP2; // P1 goes first each round
+  const soloDone    = soloLines.length >= MAX_ROUNDS * 2;
 
   // ── Username
   useEffect(() => {
@@ -130,12 +160,10 @@ export default function BattleMode() {
 
   useEffect(() => { if (nameReady && view === "rooms") loadRooms(); }, [nameReady, view, loadRooms]);
 
-  // ── Derived state
+  // ── Derived multiplayer state
   const isPlayer1 = room?.player1_name === username;
-  const isPlayer2 = room?.player2_name === username;
   const opponent  = isPlayer1 ? room?.player2_name : room?.player1_name;
 
-  // Current round = number of rounds where BOTH players have submitted + 1
   const currentRound = (() => {
     if (!room) return 1;
     const p1 = room.player1_name ?? "";
@@ -151,16 +179,18 @@ export default function BattleMode() {
 
   const hasSubmittedThisRound = lines.some(l => l.player === username && l.round_number === currentRound);
 
-  // ── Auto-scroll feed
+  // ── Auto-scroll
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
   }, [lines]);
+  useEffect(() => {
+    if (soloFeedRef.current) soloFeedRef.current.scrollTop = soloFeedRef.current.scrollHeight;
+  }, [soloLines]);
 
-  // ── Realtime for battle room view
+  // ── Realtime subscriptions
   useEffect(() => {
     if ((view !== "battle" && view !== "waiting" && view !== "results") || !room) return;
 
-    // Subscribe to room changes (status, player2 joins)
     const roomChannel = supabase
       .channel(`battle_room:${room.id}`)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "battle_rooms", filter: `id=eq.${room.id}` },
@@ -170,24 +200,19 @@ export default function BattleMode() {
           if (updated.status === "active"   && view === "waiting") setView("battle");
           if (updated.status === "finished" && view === "battle")  setView("results");
         }
-      )
-      .subscribe();
+      ).subscribe();
 
-    // Subscribe to new lines
     const linesChannel = supabase
       .channel(`battle_lines:${room.id}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_lines", filter: `room_id=eq.${room.id}` },
         (payload) => setLines(prev => prev.some(l => l.id === payload.new.id) ? prev : [...prev, payload.new as BattleLine])
-      )
-      .subscribe();
+      ).subscribe();
 
-    // Subscribe to scores
     const scoresChannel = supabase
       .channel(`battle_scores:${room.id}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_scores", filter: `room_id=eq.${room.id}` },
         (payload) => setScores(prev => prev.some(s => s.id === payload.new.id) ? prev : [...prev, payload.new as BattleScore])
-      )
-      .subscribe();
+      ).subscribe();
 
     return () => {
       supabase.removeChannel(roomChannel);
@@ -212,6 +237,8 @@ export default function BattleMode() {
       setCurrentStyle(newStyle);
       setShowCreate(false);
       setView("waiting");
+    } else if (error) {
+      setSubmitError(`Oda oluşturulamadı: ${error.message}`);
     }
     setCreating(false);
   }, [newName, newBPM, newStyle, newTopic, username, setCurrentBPM, setCurrentStyle]);
@@ -228,7 +255,6 @@ export default function BattleMode() {
       setRoom(updated);
       setCurrentBPM(updated.bpm);
       setCurrentStyle(updated.style);
-      // Load existing lines
       const { data: existingLines } = await supabase.from("battle_lines").select("*").eq("room_id", r.id).order("created_at");
       if (existingLines) setLines(existingLines as BattleLine[]);
       const { data: existingScores } = await supabase.from("battle_scores").select("*").eq("room_id", r.id);
@@ -237,32 +263,57 @@ export default function BattleMode() {
     }
   }, [username, setCurrentBPM, setCurrentStyle]);
 
-  // ── Submit line + trigger judging
+  // ── Submit line (FIXED: update local state immediately, show errors)
   const submitLine = useCallback(async () => {
     const content = inputLine.trim();
-    if (!content || !room || hasSubmittedThisRound) return;
+    if (!content || !room || hasSubmittedThisRound || submitting) return;
     setSubmitting(true);
+    setSubmitError(null);
     const syllable_count = countSyl(content);
+    const round_number = currentRound;
 
-    await supabase.from("battle_lines").insert({ room_id: room.id, player: username, content, syllable_count, round_number: currentRound });
+    // Optimistically add to local state immediately
+    const optimisticLine: BattleLine = {
+      id: `optimistic-${Date.now()}`,
+      room_id: room.id,
+      player: username,
+      content,
+      syllable_count,
+      round_number,
+      created_at: new Date().toISOString(),
+    };
+    setLines(prev => [...prev, optimisticLine]);
     setInputLine("");
 
-    // Check if opponent also submitted this round
+    const { error: insertError } = await supabase
+      .from("battle_lines")
+      .insert({ room_id: room.id, player: username, content, syllable_count, round_number });
+
+    if (insertError) {
+      // Roll back optimistic update
+      setLines(prev => prev.filter(l => l.id !== optimisticLine.id));
+      setInputLine(content);
+      setSubmitError(`Satır gönderilemedi: ${insertError.message}`);
+      setSubmitting(false);
+      return;
+    }
+
+    // Check if opponent also submitted this round (re-fetch)
     const { data: roundLines } = await supabase
       .from("battle_lines")
       .select("*")
       .eq("room_id", room.id)
-      .eq("round_number", currentRound);
+      .eq("round_number", round_number);
 
     const bothSubmitted = roundLines && room.player1_name && room.player2_name &&
       roundLines.some(l => l.player === room.player1_name) &&
       roundLines.some(l => l.player === room.player2_name);
 
     if (bothSubmitted && roundLines) {
-      // Check no score exists for this round yet (avoid double-judging)
       const { data: existingScores } = await supabase.from("battle_scores").select("id").eq("room_id", room.id);
       const roundScoreCount = existingScores?.length ?? 0;
-      const expectedScoresBeforeThisRound = (currentRound - 1) * 2;
+      const expectedScoresBeforeThisRound = (round_number - 1) * 2;
+
       if (roundScoreCount <= expectedScoresBeforeThisRound) {
         setJudging(true);
         setJudgeError(null);
@@ -275,7 +326,7 @@ export default function BattleMode() {
             body: JSON.stringify({
               mc1: { name: room.player1_name, line: mc1Line?.content ?? "" },
               mc2: { name: room.player2_name, line: mc2Line?.content ?? "" },
-              bpm: room.bpm, style: room.style, topic: room.topic, round: currentRound,
+              bpm: room.bpm, style: room.style, topic: room.topic, round: round_number,
             }),
           });
           if (res.ok) {
@@ -290,15 +341,14 @@ export default function BattleMode() {
         } finally {
           setJudging(false);
         }
-        // If last round, finish the battle
-        if (currentRound >= MAX_ROUNDS) {
+        if (round_number >= MAX_ROUNDS) {
           await supabase.from("battle_rooms").update({ status: "finished" }).eq("id", room.id);
           setView("results");
         }
       }
     }
     setSubmitting(false);
-  }, [inputLine, room, username, hasSubmittedThisRound, currentRound]);
+  }, [inputLine, room, username, hasSubmittedThisRound, submitting, currentRound]);
 
   // ── Exit room
   const exitRoom = useCallback(async () => {
@@ -310,6 +360,57 @@ export default function BattleMode() {
     setScores([]);
     setView("rooms");
   }, [room, isPlayer1]);
+
+  // ── Solo: submit a line
+  const submitSoloLine = useCallback(() => {
+    const content = soloInput.trim();
+    if (!content || soloDone) return;
+    const newLine: SoloLine = {
+      player: soloTurn,
+      content,
+      syllable_count: countSyl(content),
+      round_number: soloRound,
+    };
+    setSoloLines(prev => [...prev, newLine]);
+    setSoloInput("");
+  }, [soloInput, soloDone, soloTurn, soloRound]);
+
+  // ── Solo: judge all lines after round 3
+  const judgeSolo = useCallback(async (allLines: SoloLine[]) => {
+    setSoloJudging(true);
+    setSoloJudgeError(null);
+    try {
+      const p1Lines = allLines.filter(l => l.player === soloP1).map(l => l.content);
+      const p2Lines = allLines.filter(l => l.player === soloP2).map(l => l.content);
+      const res = await fetch("/api/battle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mc1: { name: soloP1, lines: p1Lines, line: p1Lines.join(" / ") },
+          mc2: { name: soloP2, lines: p2Lines, line: p2Lines.join(" / ") },
+          bpm: soloBPM, style: soloStyle, topic: soloTopic || "Serbest", round: MAX_ROUNDS,
+        }),
+      });
+      if (res.ok) {
+        const result: JudgeResult = await res.json();
+        setSoloResult(result);
+        setView("solo_results");
+      } else {
+        setSoloJudgeError("Hakem API hatası");
+      }
+    } catch (e) {
+      setSoloJudgeError(e instanceof Error ? e.message : "Bağlantı hatası");
+    } finally {
+      setSoloJudging(false);
+    }
+  }, [soloP1, soloP2, soloBPM, soloStyle, soloTopic]);
+
+  // Auto-trigger judge when all lines submitted
+  useEffect(() => {
+    if (soloLines.length === MAX_ROUNDS * 2 && !soloJudging && !soloResult && view === "solo") {
+      judgeSolo(soloLines);
+    }
+  }, [soloLines, soloJudging, soloResult, view, judgeSolo]);
 
   // ── Render score card
   function ScoreCard({ player, playerScores }: { player: string; playerScores: BattleScore[] }) {
@@ -323,12 +424,29 @@ export default function BattleMode() {
         </div>
         {latest && (
           <div className="flex flex-col gap-1">
-            <ScoreBar label="Kafiye" value={latest.rhyme_score ?? 0} />
-            <ScoreBar label="Flow"   value={latest.syllable_score ?? 0} />
+            <ScoreBar label="Kafiye"    value={latest.rhyme_score ?? 0} />
+            <ScoreBar label="Flow"      value={latest.syllable_score ?? 0} />
             <ScoreBar label="Özgünlük" value={latest.originality_score ?? 0} />
             <p className="text-[10px] text-zinc-500 italic mt-1">{latest.ai_comment}</p>
           </div>
         )}
+      </div>
+    );
+  }
+
+  function SoloScoreCard({ name, data }: { name: string; data: JudgeResult["mc1"] }) {
+    return (
+      <div className="flex flex-col gap-2 p-3 bg-zinc-800/50 border border-zinc-700 rounded-xl">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-white">{name}</span>
+          <span className="text-lg font-black text-violet-400 font-mono">{data.total}pt</span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <ScoreBar label="Kafiye"    value={data.rhyme} />
+          <ScoreBar label="Flow"      value={data.flow} />
+          <ScoreBar label="Özgünlük" value={data.originality} />
+          <p className="text-[10px] text-zinc-500 italic mt-1">{data.feedback}</p>
+        </div>
       </div>
     );
   }
@@ -378,7 +496,7 @@ export default function BattleMode() {
     );
   }
 
-  // Results
+  // Multiplayer results
   if (view === "results" && room) {
     const p1Scores = scores.filter(s => s.player === room.player1_name);
     const p2Scores = scores.filter(s => s.player === room.player2_name);
@@ -412,13 +530,150 @@ export default function BattleMode() {
     );
   }
 
-  // Active battle
+  // Solo results
+  if (view === "solo_results" && soloResult) {
+    const p1Total = soloResult.mc1.total;
+    const p2Total = soloResult.mc2.total;
+    const winner  = soloResult.winner === "mc1" ? soloP1 : soloResult.winner === "mc2" ? soloP2 : "Berabere";
+    return (
+      <div className="flex flex-col gap-5">
+        <div className="text-center py-4">
+          <p className="text-3xl font-black text-white">
+            {winner === "Berabere" ? "🤝 Berabere!" : `🏆 ${winner} kazandı!`}
+          </p>
+          <p className="text-zinc-500 text-sm mt-1">{p1Total} – {p2Total} puan</p>
+          {soloResult.judgeComment && (
+            <p className="text-xs text-zinc-400 italic mt-2 max-w-sm mx-auto">"{soloResult.judgeComment}"</p>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <SoloScoreCard name={soloP1} data={soloResult.mc1} />
+          <SoloScoreCard name={soloP2} data={soloResult.mc2} />
+        </div>
+        <div className="flex flex-col gap-2">
+          {soloLines.map((l, i) => (
+            <div key={i} className="flex items-baseline gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl">
+              <span className="text-[10px] font-semibold text-violet-400 flex-shrink-0">R{l.round_number} · {l.player}</span>
+              <p className="text-sm text-zinc-200 flex-1 font-mono">{l.content}</p>
+              <span className="text-[10px] font-mono text-zinc-500">{l.syllable_count}h</span>
+            </div>
+          ))}
+        </div>
+        <button onClick={() => {
+          setSoloLines([]); setSoloResult(null); setSoloInput("");
+          setSoloJudgeError(null); setView("rooms");
+        }}
+          className="w-full py-3 rounded-xl bg-violet-600 text-white font-semibold hover:bg-violet-500 transition-colors">
+          🔄 Yeni Battle
+        </button>
+      </div>
+    );
+  }
+
+  // Solo battle
+  if (view === "solo") {
+    const waitingForJudge = soloDone && soloJudging;
+    return (
+      <div className="flex flex-col gap-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <button onClick={() => { setSoloLines([]); setSoloResult(null); setSoloInput(""); setView("rooms"); }}
+            className="text-zinc-500 hover:text-white transition-colors text-sm">←</button>
+          <div className="text-center">
+            <p className="text-sm font-bold text-white">🎯 Solo Test · {soloP1} vs {soloP2}</p>
+            <p className="text-[10px] text-zinc-500 font-mono">{soloBPM} BPM · {soloStyle} · {soloTopic || "Serbest"}</p>
+          </div>
+          <div className="w-8" />
+        </div>
+
+        {/* Round bars */}
+        <div className="flex gap-1.5 justify-center">
+          {Array.from({ length: MAX_ROUNDS }).map((_, i) => {
+            const r = i + 1;
+            const linesInRound = soloLines.filter(l => l.round_number === r).length;
+            const done   = linesInRound === 2;
+            const active = !done && soloRound === r;
+            return (
+              <div key={r} className={["w-8 h-1.5 rounded-full transition-colors",
+                done ? "bg-violet-500" : active ? "bg-violet-500/50 animate-pulse" : "bg-zinc-700"
+              ].join(" ")} />
+            );
+          })}
+        </div>
+        {!soloDone && (
+          <p className="text-center text-xs">
+            <span className="text-zinc-500">Round {soloRound}/{MAX_ROUNDS} · </span>
+            <span className="text-violet-300 font-semibold">{soloTurn} yazıyor</span>
+          </p>
+        )}
+
+        {/* Lines feed */}
+        <div ref={soloFeedRef} className="flex flex-col gap-2 max-h-64 overflow-y-auto pr-1">
+          {soloLines.length === 0 ? (
+            <p className="text-xs text-zinc-600 text-center py-4">{soloP1} ilk satırı yazar, ardından {soloP2}</p>
+          ) : (
+            soloLines.map((l, i) => {
+              const isP1 = l.player === soloP1;
+              return (
+                <div key={i} className={["flex gap-2 items-start", isP1 ? "flex-row-reverse" : "flex-row"].join(" ")}>
+                  <span className={["text-[10px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 mt-0.5",
+                    isP1 ? "bg-violet-500/20 border-violet-500/40 text-violet-300" : "bg-zinc-700/40 border-zinc-600 text-zinc-400"
+                  ].join(" ")}>{l.player}</span>
+                  <div className={["flex flex-col", isP1 ? "items-end" : "items-start"].join(" ")}>
+                    <p className={["text-sm font-mono leading-snug px-3 py-2 rounded-xl border",
+                      isP1 ? "bg-violet-950/30 border-violet-500/20 text-zinc-100" : "bg-zinc-900 border-zinc-700 text-zinc-300"
+                    ].join(" ")}>{l.content}</p>
+                    <span className="text-[9px] text-zinc-600 font-mono mt-0.5">{l.syllable_count}h · R{l.round_number}</span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Judging */}
+        {waitingForJudge && (
+          <div className="flex items-center gap-2 justify-center py-3">
+            <div className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs text-violet-400 animate-pulse">AI hakem değerlendiriyor…</span>
+          </div>
+        )}
+        {soloJudgeError && (
+          <div className="flex items-center justify-between px-3 py-2 bg-red-950/30 border border-red-500/30 rounded-xl">
+            <p className="text-xs text-red-400">{soloJudgeError}</p>
+            <button onClick={() => judgeSolo(soloLines)} className="text-xs text-red-300 hover:text-white ml-2">Tekrar dene</button>
+          </div>
+        )}
+
+        {/* Input */}
+        {!soloDone && (
+          <div className="flex flex-col gap-2 pt-2 border-t border-zinc-800">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[10px] text-zinc-500">
+                <span className="text-violet-300 font-medium">{soloTurn}</span>'ın satırı
+              </span>
+              {soloInput && <span className="text-[10px] font-mono text-zinc-500">{countSyl(soloInput)}h</span>}
+            </div>
+            <textarea value={soloInput} onChange={e => setSoloInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitSoloLine(); } }}
+              placeholder={`${soloTurn} satırını yaz…`} rows={2}
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-violet-500 resize-none transition-colors"
+            />
+            <button onClick={submitSoloLine} disabled={!soloInput.trim()}
+              className="w-full py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-500 disabled:opacity-40 transition-colors">
+              ⚔️ Yaz ({soloTurn})
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Active multiplayer battle
   if (view === "battle" && room) {
-    const myLines  = lines.filter(l => l.player === username);
-    const oppLines = lines.filter(l => l.player === opponent);
-    const myScores = scores.filter(s => s.player === username);
-    const myTotal  = myScores.reduce((s, sc) => s + (sc.total_score ?? 0), 0);
-    const oppTotal = scores.filter(s => s.player === opponent).reduce((s, sc) => s + (sc.total_score ?? 0), 0);
+    const myScores   = scores.filter(s => s.player === username);
+    const myTotal    = myScores.reduce((s, sc) => s + (sc.total_score ?? 0), 0);
+    const oppTotal   = scores.filter(s => s.player === opponent).reduce((s, sc) => s + (sc.total_score ?? 0), 0);
     const battleDone = currentRound > MAX_ROUNDS;
 
     return (
@@ -441,7 +696,7 @@ export default function BattleMode() {
         <div className="flex gap-1.5 justify-center">
           {Array.from({ length: MAX_ROUNDS }).map((_, i) => {
             const r = i + 1;
-            const done = r < currentRound;
+            const done   = r < currentRound;
             const active = r === currentRound;
             return (
               <div key={r} className={["w-8 h-1.5 rounded-full transition-colors",
@@ -476,7 +731,12 @@ export default function BattleMode() {
           )}
         </div>
 
-        {/* Judging indicator */}
+        {/* Error */}
+        {submitError && (
+          <p className="text-xs text-red-400 text-center bg-red-950/20 border border-red-500/20 rounded-xl px-3 py-2">{submitError}</p>
+        )}
+
+        {/* Judging */}
         {judging && (
           <div className="flex items-center gap-2 justify-center py-2">
             <div className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
@@ -485,7 +745,7 @@ export default function BattleMode() {
         )}
         {judgeError && <p className="text-xs text-red-400 text-center">{judgeError}</p>}
 
-        {/* Score display for completed rounds */}
+        {/* Scores */}
         {scores.length > 0 && (
           <div className="grid grid-cols-2 gap-2">
             <ScoreCard player={username} playerScores={scores.filter(s => s.player === username)} />
@@ -493,7 +753,7 @@ export default function BattleMode() {
           </div>
         )}
 
-        {/* Input area */}
+        {/* Input */}
         {!battleDone && (
           <div className="flex flex-col gap-2 pt-2 border-t border-zinc-800">
             {hasSubmittedThisRound ? (
@@ -523,21 +783,82 @@ export default function BattleMode() {
     );
   }
 
-  // Room list
+  // ── Room list
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-black text-white">⚔️ Battle Odaları</h2>
+          <h2 className="text-lg font-black text-white">⚔️ Battle Modu</h2>
           <p className="text-xs text-zinc-500 mt-0.5">MC: <span className="text-violet-300 font-medium">{username}</span></p>
         </div>
-        <button onClick={() => setShowCreate(v => !v)}
-          className="px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-semibold hover:bg-violet-500 transition-colors">
-          + Yeni Battle
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowSoloSetup(v => !v)}
+            className="px-3 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-semibold hover:border-violet-500 hover:text-white transition-colors">
+            🎯 Solo Test
+          </button>
+          <button onClick={() => setShowCreate(v => !v)}
+            className="px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-semibold hover:bg-violet-500 transition-colors">
+            + Çok Oyunculu
+          </button>
+        </div>
       </div>
 
-      {/* Create form */}
+      {/* Solo setup form */}
+      {showSoloSetup && (
+        <div className="flex flex-col gap-3 p-4 bg-zinc-900 rounded-2xl border border-zinc-700">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-400 font-semibold uppercase tracking-widest">Solo Test Modu</p>
+            <span className="text-[10px] text-zinc-600">3 round · sen iki tarafı da oynarsın</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MC 1 Adı</label>
+              <input value={soloP1} onChange={e => setSoloP1(e.target.value)} maxLength={20}
+                className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-violet-500 transition-colors"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MC 2 Adı</label>
+              <input value={soloP2} onChange={e => setSoloP2(e.target.value)} maxLength={20}
+                className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-violet-500 transition-colors"
+              />
+            </div>
+          </div>
+          <input value={soloTopic} onChange={e => setSoloTopic(e.target.value)}
+            placeholder="Konu (isteğe bağlı)…" maxLength={60}
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-violet-500 transition-colors"
+          />
+          <div className="flex gap-2">
+            <div className="flex flex-col gap-1 flex-1">
+              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">BPM</label>
+              <input type="number" min={60} max={200} value={soloBPM}
+                onChange={e => setSoloBPM(Number(e.target.value))}
+                className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-mono text-white outline-none focus:border-violet-500 transition-colors"
+              />
+            </div>
+            <div className="flex flex-col gap-1 flex-1">
+              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Stil</label>
+              <select value={soloStyle} onChange={e => setSoloStyle(e.target.value)}
+                className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-violet-500 transition-colors">
+                {STYLES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setSoloLines([]); setSoloResult(null); setSoloInput(""); setSoloJudgeError(null); setShowSoloSetup(false); setView("solo"); }}
+              disabled={!soloP1.trim() || !soloP2.trim()}
+              className="flex-1 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-500 disabled:opacity-40 transition-colors">
+              🎯 Solo Battle Başlat
+            </button>
+            <button onClick={() => setShowSoloSetup(false)}
+              className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-400 text-sm hover:text-white transition-colors">
+              İptal
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Multiplayer create form */}
       {showCreate && (
         <div className="flex flex-col gap-3 p-4 bg-zinc-900 rounded-2xl border border-violet-500/30">
           <p className="text-xs text-zinc-400 font-semibold uppercase tracking-widest">Yeni Battle Odası</p>
@@ -566,6 +887,7 @@ export default function BattleMode() {
               </select>
             </div>
           </div>
+          {submitError && <p className="text-xs text-red-400">{submitError}</p>}
           <div className="flex gap-2">
             <button onClick={createRoom} disabled={!newName.trim() || creating}
               className="flex-1 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-500 disabled:opacity-40 transition-colors">
@@ -586,15 +908,15 @@ export default function BattleMode() {
           <span className="text-sm text-zinc-500">Odalar yükleniyor…</span>
         </div>
       ) : rooms.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-12 text-center">
+        <div className="flex flex-col items-center gap-2 py-10 text-center">
           <span className="text-3xl">⚔️</span>
-          <p className="text-sm text-zinc-400">Aktif battle odası yok</p>
-          <p className="text-xs text-zinc-600">İlk battle'ı sen başlat!</p>
+          <p className="text-sm text-zinc-400">Aktif çok oyunculu oda yok</p>
+          <p className="text-xs text-zinc-600">Solo test ile hemen başlayabilirsin!</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
           {rooms.map(r => {
-            const isFull = r.player1_name && r.player2_name;
+            const isFull   = r.player1_name && r.player2_name;
             const isMyRoom = r.player1_name === username || r.player2_name === username;
             return (
               <div key={r.id} className="flex items-center justify-between p-4 bg-zinc-900 rounded-2xl border border-zinc-800 hover:border-zinc-700 transition-colors">
