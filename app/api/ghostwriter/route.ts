@@ -260,7 +260,16 @@ ${userStyle.sentenceLength ? `- Cümle Uzunluğu: ${userStyle.sentenceLength}` :
     ? `\n- Karakterin yasaklı kelimeleri: ${characterDNA.forbiddenWords.join(", ")} (ASLA kullanma)`
     : "";
 
+  const characterImmersion = characterDNA ? `
+KARAKTERİN GÖZÜNDEN BAK:
+- ${characterDNA.name}'nin gördüklerini gör — onun penceresinden bak dünyaya
+- Onun geçmişinden spesifik bir anı hatırla: ${characterDNA.backstory.slice(0, 120)}...
+- Onun dilini kullan — imza kelimeleri: ${characterDNA.signatureWords.join(", ")}
+- Onun ${characterDNA.struggles.slice(0, 2).join(" ve ")} mücadelesini hisset
+- Soyut değil, YAŞANMIŞ bir an yaz — sanki şu an o anın içindesin` : "";
+
   return `${identityBlock}
+${characterImmersion}
 
 GÖREV:
 Konu/Prompt: "${prompt}"
@@ -270,38 +279,64 @@ ${isSokak ? "Ton: sokak/agresif — gündelik Türkçe argosunu, sokak dilini ku
 ${rapperInstr}${rhythmInstr}
 ${STRONG_WEAK_EXAMPLES}
 
-DÖRTLÜK KURALLARI (BUNLARA KESİNLİKLE UY):
-1. TAM OLARAK 4 SATIR YAZ — ne eksik ne fazla
-2. DOUBLE RHYME zorunlu: son 2 hece kafiyeli olmalı (ör: "karanlık-ta" / "yalnız-lık-ta")
-3. Kafiye şeması: satır 1-2 birbiriyle (AA), satır 3-4 birbiriyle (BB) — veya çapraz kafiye (ABAB)
-4. İÇ KAFIYE bonus: satır içinde de kafiye kurabilirsen ekle
-5. 4 satır birlikte TAM BİR DÜŞÜNCE anlatmalı — yarım bırakma
-6. VOLTA: 3. veya 4. satırda beklenmedik bir dönüş/sürpriz olsun
-7. PUNCH LINE: Son satır en güçlü, en keskin satır olsun
-8. İLK SATIR KANCA: İlk 3 kelimede dinleyiciyi yakala — in medias res başla
+REFERANS DÖRTLÜKLER — bu kalitede yaz:
+
+Örnek 1 (Kendrick tarzı — hikaye):
+"Sabah altıda işe gitti babam, ben uyurdum
+Akşam altıda döndü, ben yoktum
+Yıllar sonra anladım neden sessizdi
+Yorgunluk bazen sevgiden büyük olur"
+
+Örnek 2 (Nas tarzı — sokak gazetesi):
+"Mahalle bakkalı kapandı geçen ay
+Yerine bir ATM koydu banka
+Para var artık her köşede
+Ama ekmek almak için kuyruğa giriyoruz"
+
+Örnek 3 (J.Cole tarzı — iç ses):
+"Aynada kendime bakıyorum uzun uzun
+Tanımak istiyorum o gözlerdeki adamı
+Başardım dediklerimi başardım
+Ama başarmadan önceki ben neredeydi"
+
+Örnek 4 (GNG tarzı — keskin ve ağır):
+"Banka hesabım sıfır, gurur hesabım dolu
+Borç istedim, telefona bakmadı
+Şimdi aynı adam mesaj atıyor
+Numara kayıtlı değil, geç kaldı"
+
+ANLAM BÜTÜNLÜĞÜ — 4 satır tek bir ANI, SAHNE veya DÜŞÜNCE etrafında dönsün:
+- Satır 1: Sahneyi aç — neredesin, ne görüyorsun, ne hissediyorsun (in medias res, ilk 3 kelimede yakala)
+- Satır 2: Derinleştir — spesifik bir detay ekle, gerilim veya duygu yükselt
+- Satır 3: VOLTA — beklenmedik dönüş, iç ses, çelişki, ya da perspektif değişimi
+- Satır 4: PUNCH — en güçlü satır, kapıyı kapat ama zihinlerde soru bırak
+
+ŞİİRSEL ARAÇLAR — bunlardan en az birini kullan:
+- Enjambman: düşünce bir satırdan diğerine akar, satır ortasında kesilir
+- Anafora: aynı kelime veya ifadeyle başlayan ardışık satırlar
+- Paradoks: çelişkili ama içten doğru bir ifade ("en yalnız kalabalıkta")
+- Somutlaştırma: soyut bir duyguyu somut bir nesne veya eylemle göster
+- Sessizlik: söylenmeyeni ima et — boşluğu dinleyici doldursun
+
+DÖRTLÜK KURALLARI:
+1. TAM OLARAK 4 SATIR — ne eksik ne fazla
+2. DOUBLE RHYME zorunlu: son 2 hece kafiyeli (ör: "karanlık-ta" / "yalnız-lık-ta")
+3. Kafiye şeması: AABB (1-2 birbiriyle, 3-4 birbiriyle) veya ABAB (çapraz)
+4. İÇ KAFIYE: satır içinde de kafiye kurabilirsen ekle — bonus puan
+5. 4 satır birlikte TAM BİR DÜŞÜNCE — anlam yarım kalmasın
+6. Türkçe yaz, hiçbir İngilizce kelime kullanma
 
 GENIUS.COM REFERANS ÇERÇEVESİ:
-TÜRKÇE EKOL:
-- Baby Gang/GNG: Kısa, keskin, ağır. Her kelime sert iner.
-- Şanışer: Uzun soluklu satırlar, iç monolog, felsefi soru işaretleri
-- Ceza: Teknik kafiye, iç kafiye ustası, Türkçeyi zorlayan kelime seçimi
-- Ezhel: Görsel imgeler, laid-back ama derin, şehir şiiri
-
-ULUSLARARASI EKOL:
-- Kendrick Lamar: Her dörtlük bir hikayenin bölümü. İç çatışma.
-- J.Cole: Autobiografik detay, 'show don't tell'
-- Nas: Sokak gazetecisi. Somut gözlem. Zaman ve mekan.
-- Jay-Z: Çift anlam, ekonomik kelime, her satır punch
-
-BÜYÜK PRENSİPLER:
-- 'Show don't tell': 'üzgündüm' değil, üzüntüyü bir eylemle göster
-- Spesifik detay: 'ayakkabım eskidi' > 'yokluk içindeydim'
-- Punch line: Son satır en güçlü satır
+TÜRKÇE: Baby Gang/GNG (keskin, ağır, her kelime sert), Şanışer (iç monolog, felsefi), Ceza (iç kafiye ustası), Ezhel (görsel imgeler, şehir şiiri)
+ULUSLARARASI: Kendrick (her dörtlük hikayenin bölümü), J.Cole (autobiografik detay, show don't tell), Nas (somut gözlem, zaman+mekan), Jay-Z (çift anlam, ekonomik kelime)
 
 YASAK:
-- "sokaklar ağlıyor", "kalbim yandı", "hayat zor", "gözlerim yaşlı", "yolum uzun", "vazgeçmem", "güçlüyüm" gibi klişeler
-- Motivasyon posteri ve aforizm tarzı sloganlar
-- Soyut duygusal listeler${forbiddenExtra}
+- "sokaklar ağlıyor", "kalbim yandı", "hayat zor", "gözlerim yaşlı", "yolum uzun", "vazgeçmem", "güçlüyüm"
+- Motivasyon posteri sloganları ve aforizm tarzı ifadeler
+- Birbiriyle anlam bağlantısı olmayan satırlar — her satır bir öncekini taşımalı
+- Soyut duygusal listeler ("içim boş, ruhum yorgun, kalbim kırık")${forbiddenExtra}
+
+KALİTE EŞİĞİ: Ürettiğin dörtlük 7/10 altında kalacaksa baştan yaz. Sadece 8+ kalitesinde dörtlük kabul et. qualityScore alanına dürüst bir puan ver.
 
 Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
 {
@@ -313,9 +348,9 @@ Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
     "internalRhymes": [],
     "flowPattern": "senkoplu",
     "verseType": "verse",
-    "meaningNote": "Bu dörtlüğün anlam özeti 1 cümle"
+    "meaningNote": "Bu dörtlüğün anlam özeti — hangi sahneyi, anı veya duyguyu anlattığı"
   },
-  "styleNotes": "${characterDNA ? "Karakterin sesine" : "Sanatçı stiline"} nasıl uyduğuna dair kısa not",
+  "styleNotes": "${characterDNA ? "Karakterin sesine ve geçmişine" : "Sanatçı stiline"} nasıl uyduğuna dair kısa not",
   "qualityScore": 8
 }`;
 }
