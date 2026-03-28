@@ -53,12 +53,32 @@ interface AnalyzeResponse {
   sentenceLength: "kısa" | "orta" | "uzun";
 }
 
-interface GenerateResponse {
+interface DoubleRhyme {
+  lines: [number, number];
+  rhymingSyllables: string;
+  type: "double" | "single";
+}
+
+interface InternalRhyme {
+  lineIndex: number;
+  words: string[];
+}
+
+export interface VerseData {
   lines: string[];
   syllableCounts: number[];
-  rhymesWith: string;
+  rhymeScheme: "AABB" | "ABAB" | "ABBA" | "AAAA";
+  doubleRhymes: DoubleRhyme[];
+  internalRhymes: InternalRhyme[];
+  flowPattern: "senkoplu" | "düz" | "triplet";
+  verseType: "verse" | "hook" | "bridge";
+  meaningNote: string;
+}
+
+interface GenerateResponse {
+  verse: VerseData;
   styleNotes: string;
-  flowUsed?: string;
+  qualityScore: number;
 }
 
 interface ContinueResponse {
@@ -212,6 +232,13 @@ function generatePrompt(
   const rapperInstr = rapperRhythmInstruction(rapperStyle);
   const rhythmInstr = rhythmPatternInstruction(rhythmPattern);
 
+  // BPM-based syllable guidance
+  const sylGuide = bpm < 100
+    ? "8-11 hece/satır (yavaş tempo)"
+    : bpm < 130
+    ? "10-14 hece/satır (orta tempo)"
+    : "12-16 hece/satır (hızlı tempo)";
+
   const identityBlock = characterDNA
     ? `SEN ${characterDNA.name.toUpperCase()}'SIN.
 Birinci şahıs olarak düşün, hisset, yaz. Dışarıdan anlatma — içeriden yaşa.
@@ -237,34 +264,59 @@ ${userStyle.sentenceLength ? `- Cümle Uzunluğu: ${userStyle.sentenceLength}` :
 
 GÖREV:
 Konu/Prompt: "${prompt}"
-BPM: ${bpm} → hedef hece/satır: ${ts.ideal} (aralık: ${ts.min}–${ts.max})
+BPM: ${bpm} → ${sylGuide}
 Kafiye şeması: ${rhymeScheme || userStyle.rhymePattern}
 ${isSokak ? "Ton: sokak/agresif — gündelik Türkçe argosunu, sokak dilini kullan\n" : ""}${flowInstr}
 ${rapperInstr}${rhythmInstr}
 ${STRONG_WEAK_EXAMPLES}
 
-ZORUNLU KURALLAR:
-1. Tam olarak 2-4 satır yaz
-2. İLK SATIR EN GÜÇLÜ SATIR OLMALI — beklenmedik, sürpriz bir açıdan gir konuya; in medias res başla
-3. Her satır somut bir sahne, spesifik bir detay veya keskin bir imge içermeli — genel soyut ifadeler yasak
-4. Satırlar arasında mantıksal ve duygusal devamlılık olsun — kopuk kelime dizimi yasak
-5. Kafiye şemasına uy: ${rhymeScheme || userStyle.rhymePattern}
-6. Türkçe yaz, hiçbir İngilizce kelime kullanma
-7. ${characterDNA ? "Karakterin sesi tutarlı olsun — onun yaşadıklarından, gördüklerinden, hissettiklerinden yaz" : "Sanatçının ses tonunu ve stilini koru"}
+DÖRTLÜK KURALLARI (BUNLARA KESİNLİKLE UY):
+1. TAM OLARAK 4 SATIR YAZ — ne eksik ne fazla
+2. DOUBLE RHYME zorunlu: son 2 hece kafiyeli olmalı (ör: "karanlık-ta" / "yalnız-lık-ta")
+3. Kafiye şeması: satır 1-2 birbiriyle (AA), satır 3-4 birbiriyle (BB) — veya çapraz kafiye (ABAB)
+4. İÇ KAFIYE bonus: satır içinde de kafiye kurabilirsen ekle
+5. 4 satır birlikte TAM BİR DÜŞÜNCE anlatmalı — yarım bırakma
+6. VOLTA: 3. veya 4. satırda beklenmedik bir dönüş/sürpriz olsun
+7. PUNCH LINE: Son satır en güçlü, en keskin satır olsun
+8. İLK SATIR KANCA: İlk 3 kelimede dinleyiciyi yakala — in medias res başla
+
+GENIUS.COM REFERANS ÇERÇEVESİ:
+TÜRKÇE EKOL:
+- Baby Gang/GNG: Kısa, keskin, ağır. Her kelime sert iner.
+- Şanışer: Uzun soluklu satırlar, iç monolog, felsefi soru işaretleri
+- Ceza: Teknik kafiye, iç kafiye ustası, Türkçeyi zorlayan kelime seçimi
+- Ezhel: Görsel imgeler, laid-back ama derin, şehir şiiri
+
+ULUSLARARASI EKOL:
+- Kendrick Lamar: Her dörtlük bir hikayenin bölümü. İç çatışma.
+- J.Cole: Autobiografik detay, 'show don't tell'
+- Nas: Sokak gazetecisi. Somut gözlem. Zaman ve mekan.
+- Jay-Z: Çift anlam, ekonomik kelime, her satır punch
+
+BÜYÜK PRENSİPLER:
+- 'Show don't tell': 'üzgündüm' değil, üzüntüyü bir eylemle göster
+- Spesifik detay: 'ayakkabım eskidi' > 'yokluk içindeydim'
+- Punch line: Son satır en güçlü satır
 
 YASAK:
 - "sokaklar ağlıyor", "kalbim yandı", "hayat zor", "gözlerim yaşlı", "yolum uzun", "vazgeçmem", "güçlüyüm" gibi klişeler
 - Motivasyon posteri ve aforizm tarzı sloganlar
-- Kimsenin yaşamadığı, kimseye ait olmayan soyut duygusal ifadeler
-- Üç veya daha fazla soyut sıfatı arka arkaya dizmek${forbiddenExtra}
+- Soyut duygusal listeler${forbiddenExtra}
 
 Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
 {
-  "lines": ["satır1", "satır2", ...],
-  "syllableCounts": [<satır1 hece sayısı>, <satır2 hece sayısı>, ...],
-  "rhymesWith": "<yeni satırların kafiye kurduğu kelime/ek>",
-  "styleNotes": "<bu satırların ${characterDNA ? "karakterin sesine" : "sanatçı stiline"} nasıl uyduğuna dair kısa Türkçe not>",
-  "flowUsed": "<kullanılan flow stilinin kısa adı>"
+  "verse": {
+    "lines": ["satır1", "satır2", "satır3", "satır4"],
+    "syllableCounts": [10, 11, 10, 11],
+    "rhymeScheme": "AABB",
+    "doubleRhymes": [{"lines": [0, 1], "rhymingSyllables": "kafiyeli-ek", "type": "double"}, {"lines": [2, 3], "rhymingSyllables": "kafiyeli-ek2", "type": "double"}],
+    "internalRhymes": [],
+    "flowPattern": "senkoplu",
+    "verseType": "verse",
+    "meaningNote": "Bu dörtlüğün anlam özeti 1 cümle"
+  },
+  "styleNotes": "${characterDNA ? "Karakterin sesine" : "Sanatçı stiline"} nasıl uyduğuna dair kısa not",
+  "qualityScore": 8
 }`;
 }
 
@@ -426,7 +478,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (mode === "analyze" && !("vocabulary" in parsed)) {
       return NextResponse.json({ error: "Unexpected response shape", raw }, { status: 502 });
     }
-    if (mode === "generate" && !("lines" in parsed && "syllableCounts" in parsed)) {
+    if (mode === "generate" && !("verse" in parsed)) {
       return NextResponse.json({ error: "Unexpected response shape", raw }, { status: 502 });
     }
     if (mode === "continue" && !("lines" in parsed && "section" in parsed)) {

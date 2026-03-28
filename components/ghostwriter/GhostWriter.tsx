@@ -16,6 +16,20 @@ import {
   saveCharacterDNA,
 } from "@/lib/characterDNA";
 import CharacterCreator from "./CharacterCreator";
+import BeatStudio from "./BeatStudio";
+import SongStructurePlanner, { SectionType } from "./SongStructurePlanner";
+
+// VerseData shape (mirrors API response)
+interface VerseData {
+  lines: string[];
+  syllableCounts: number[];
+  rhymeScheme: "AABB" | "ABAB" | "ABBA" | "AAAA";
+  doubleRhymes: Array<{ lines: [number, number]; rhymingSyllables: string; type: "double" | "single" }>;
+  internalRhymes: Array<{ lineIndex: number; words: string[] }>;
+  flowPattern: string;
+  verseType: "verse" | "hook" | "bridge";
+  meaningNote: string;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,7 +155,7 @@ function Skeleton({ className }: { className?: string }) {
 // Component
 // ---------------------------------------------------------------------------
 export default function GhostWriter() {
-  const { currentBPM, currentLyrics, targetSyllables, setPendingLines, setStyleProfile: setContextProfile } =
+  const { currentBPM, setCurrentBPM, currentLyrics, targetSyllables, setPendingLines, setStyleProfile: setContextProfile } =
     useMusicContext();
 
   // Character DNA
@@ -165,6 +179,10 @@ export default function GhostWriter() {
   const [genError, setGenError]         = useState<string | null>(null);
 
   const [result, setResult] = useState<{
+    // verse mode (generate)
+    verse?: VerseData;
+    qualityScore?: number;
+    // continue mode (legacy line-by-line)
     lines: string[];
     syllableCounts: number[];
     rhymesWith: string;
@@ -172,6 +190,7 @@ export default function GhostWriter() {
     flowUsed?: string;
     narrativeNote?: string;
     qualityScores: number[];
+    mode: "generate" | "continue";
   } | null>(null);
 
   const [lastGenParams, setLastGenParams] = useState<{
@@ -179,6 +198,7 @@ export default function GhostWriter() {
   } | null>(null);
   const [addedFlash, setAddedFlash]   = useState(false);
   const [likedLines, setLikedLines]   = useState<LikedLine[]>([]);
+  const [, setFocusSection] = useState<SectionType>("verse");
 
   useEffect(() => {
     setProfile(loadStyleProfile());
@@ -263,16 +283,25 @@ export default function GhostWriter() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
 
-      const lines: string[]          = data.lines ?? [];
-      const syllableCounts: number[] = data.syllableCounts?.length === lines.length
+      const verse: VerseData | undefined = data.verse;
+      const lines: string[] = verse?.lines ?? data.lines ?? [];
+      const syllableCounts: number[] = verse?.syllableCounts ?? (data.syllableCounts?.length === lines.length
         ? data.syllableCounts
-        : lines.map(countSyllablesTR);
-
-      const qualityScores = lines.map((l, i) =>
+        : lines.map(countSyllablesTR));
+      const qualityScores = lines.map((l: string, i: number) =>
         lineQuality(l, syllableCounts[i] ?? countSyllablesTR(l), targetSyl, lines)
       );
-
-      setResult({ ...data, lines, syllableCounts, qualityScores });
+      setResult({
+        verse,
+        qualityScore: data.qualityScore,
+        lines,
+        syllableCounts,
+        rhymesWith: verse?.rhymeScheme ?? "",
+        styleNotes: data.styleNotes ?? "",
+        flowUsed: verse?.flowPattern,
+        qualityScores,
+        mode: "generate",
+      });
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "Hata oluştu");
     } finally {
@@ -315,6 +344,7 @@ export default function GhostWriter() {
         styleNotes: `Bölüm: ${data.section ?? "verse"}`,
         narrativeNote: data.narrativeNote,
         qualityScores,
+        mode: "continue",
       });
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "Hata oluştu");
@@ -385,6 +415,9 @@ export default function GhostWriter() {
 
   return (
     <div className="flex flex-col gap-5 w-full max-w-2xl mx-auto">
+
+      {/* ── Beat Studio ────────────────────────────────────────────────── */}
+      <BeatStudio bpm={currentBPM} onBpmChange={setCurrentBPM} />
 
       {/* ── 0. Character DNA ──────────────────────────────────────────────── */}
       {showCharCreator && (
@@ -666,58 +699,149 @@ export default function GhostWriter() {
         {result && !generating && !continuing && (
           <div className="flex flex-col gap-3">
 
-            {/* Lines */}
-            <div className="flex flex-col gap-2">
-              {result.lines.map((line, i) => {
-                const syl    = result.syllableCounts[i] ?? countSyllablesTR(line);
-                const score  = result.qualityScores[i] ?? 0;
-                const isBest = i === bestIdx;
-                const isLiked = likedLines.some((l) => l.line === line);
-                return (
-                  <div
-                    key={i}
-                    className={["flex items-start gap-2 border rounded-xl px-3 py-2.5 transition-all",
-                      isBest
-                        ? "bg-violet-950/30 border-violet-500/40 ring-1 ring-violet-500/30"
-                        : "bg-zinc-800/60 border-zinc-700/60",
-                    ].join(" ")}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-zinc-100 font-mono leading-snug break-words">{line}</p>
-                      {isBest && (
-                        <span className="text-[9px] text-violet-400 font-semibold uppercase tracking-widest mt-0.5 block">
-                          ✦ en güçlü satır
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                      <span className={["text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono", qualityColor(score)].join(" ")}>
-                        {score}/10
-                      </span>
-                      <span className={["text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono", sylColor(syl, targetSyl)].join(" ")}>
-                        {syl}h
-                      </span>
-                      {/* Per-line add button */}
-                      <button
-                        onClick={() => setPendingLines([line])}
-                        className="text-[10px] text-zinc-600 hover:text-emerald-400 transition-colors font-mono"
-                        title="Bu satırı editöre ekle"
-                      >
-                        ➕
-                      </button>
-                      {/* Like button */}
-                      <button
-                        onClick={() => toggleLike(line, score)}
-                        className={["text-sm transition-colors", isLiked ? "text-red-400" : "text-zinc-600 hover:text-red-400"].join(" ")}
-                        title={isLiked ? "Beğenildi" : "Bu satırı beğen"}
-                      >
-                        {isLiked ? "❤️" : "🤍"}
-                      </button>
-                    </div>
+            {/* Verse Card (generate mode) */}
+            {result.verse ? (
+              <div className="flex flex-col gap-3 bg-zinc-800/40 border border-violet-500/20 rounded-2xl p-4">
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-violet-400">DÖRTLÜK</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/20 border border-violet-500/30 text-violet-300 font-mono">
+                      {result.verse.verseType === "hook" ? "Nakarat" : result.verse.verseType === "bridge" ? "Köprü" : "Kıta"}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-700 border border-zinc-600 text-zinc-400 font-mono">
+                      {result.verse.rhymeScheme}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+                  {result.qualityScore !== undefined && (
+                    <span className={["text-xs font-bold px-2 py-0.5 rounded-lg border font-mono",
+                      result.qualityScore >= 8 ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                      : result.qualityScore >= 6 ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                      : "bg-zinc-700 border-zinc-600 text-zinc-400"
+                    ].join(" ")}>
+                      {result.qualityScore}/10
+                    </span>
+                  )}
+                </div>
+
+                {/* Lines with rhyme scheme */}
+                {(() => {
+                  const scheme = result.verse.rhymeScheme; // "AABB" | "ABAB" | "ABBA" | "AAAA"
+                  const schemeColors: Record<string, string> = {
+                    A: "text-violet-400 bg-violet-500/10 border-violet-500/30",
+                    B: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+                  };
+                  return (
+                    <div className="flex flex-col gap-2">
+                      {result.lines.map((line, i) => {
+                        const letter = scheme[i] ?? "A";
+                        const syl = result.syllableCounts[i] ?? countSyllablesTR(line);
+                        const score = result.qualityScores[i] ?? 0;
+                        const isLiked = likedLines.some((l) => l.line === line);
+                        // Check if this line has a double rhyme highlight
+                        const dbl = result.verse!.doubleRhymes.find((d) => d.lines.includes(i as 0 | 1 | 2 | 3));
+                        return (
+                          <div key={i} className="flex items-start gap-2">
+                            {/* Rhyme letter badge */}
+                            <span className={["text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded border flex-shrink-0 mt-0.5", schemeColors[letter] ?? schemeColors.A].join(" ")}>
+                              {letter}
+                            </span>
+                            {/* Line */}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-zinc-100 font-mono leading-snug break-words">{line}</p>
+                              {dbl && (
+                                <span className="text-[9px] text-violet-400 font-mono">↩ {dbl.rhymingSyllables}</span>
+                              )}
+                            </div>
+                            {/* Syllable badge */}
+                            <span className={["text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono flex-shrink-0", sylColor(syl, targetSyl)].join(" ")}>
+                              {syl}h
+                            </span>
+                            {/* Actions */}
+                            <div className="flex flex-col gap-0.5 flex-shrink-0">
+                              <button
+                                onClick={() => setPendingLines([line])}
+                                className="text-[10px] text-zinc-600 hover:text-emerald-400 transition-colors"
+                                title="Bu satırı ekle"
+                              >➕</button>
+                              <button
+                                onClick={() => toggleLike(line, score)}
+                                className={["text-xs transition-colors", isLiked ? "text-red-400" : "text-zinc-600 hover:text-red-400"].join(" ")}
+                              >{isLiked ? "❤️" : "🤍"}</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                {/* Meaning note */}
+                {result.verse.meaningNote && (
+                  <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl px-3 py-2">
+                    <p className="text-[10px] text-blue-400 uppercase tracking-widest mb-0.5">Anlam</p>
+                    <p className="text-xs text-blue-300 italic leading-relaxed">{result.verse.meaningNote}</p>
+                  </div>
+                )}
+
+                {/* Style notes */}
+                {result.styleNotes && (
+                  <p className="text-[11px] text-zinc-500 italic px-1">{result.styleNotes}</p>
+                )}
+
+                {/* Flow pattern */}
+                {result.flowUsed && (
+                  <p className="text-[11px] text-zinc-600 px-1 font-mono">flow: {result.flowUsed}</p>
+                )}
+              </div>
+            ) : (
+              /* Legacy per-line display (continue mode) */
+              <div className="flex flex-col gap-2">
+                {result.lines.map((line, i) => {
+                  const syl    = result.syllableCounts[i] ?? countSyllablesTR(line);
+                  const score  = result.qualityScores[i] ?? 0;
+                  const isBest = i === bestIdx;
+                  const isLiked = likedLines.some((l) => l.line === line);
+                  return (
+                    <div
+                      key={i}
+                      className={["flex items-start gap-2 border rounded-xl px-3 py-2.5 transition-all",
+                        isBest
+                          ? "bg-violet-950/30 border-violet-500/40 ring-1 ring-violet-500/30"
+                          : "bg-zinc-800/60 border-zinc-700/60",
+                      ].join(" ")}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-zinc-100 font-mono leading-snug break-words">{line}</p>
+                        {isBest && (
+                          <span className="text-[9px] text-violet-400 font-semibold uppercase tracking-widest mt-0.5 block">
+                            ✦ en güçlü satır
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                        <span className={["text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono", qualityColor(score)].join(" ")}>
+                          {score}/10
+                        </span>
+                        <span className={["text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono", sylColor(syl, targetSyl)].join(" ")}>
+                          {syl}h
+                        </span>
+                        <button
+                          onClick={() => setPendingLines([line])}
+                          className="text-[10px] text-zinc-600 hover:text-emerald-400 transition-colors font-mono"
+                          title="Bu satırı editöre ekle"
+                        >➕</button>
+                        <button
+                          onClick={() => toggleLike(line, score)}
+                          className={["text-sm transition-colors", isLiked ? "text-red-400" : "text-zinc-600 hover:text-red-400"].join(" ")}
+                          title={isLiked ? "Beğenildi" : "Bu satırı beğen"}
+                        >{isLiked ? "❤️" : "🤍"}</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Narrative note — continue mode */}
             {result.narrativeNote && (
@@ -878,6 +1002,18 @@ export default function GhostWriter() {
           ) : null}
         </div>
       )}
+
+      {/* ── Song Structure Planner ────────────────────────────────────── */}
+      <SongStructurePlanner
+        onSectionFocus={(type) => {
+          setFocusSection(type);
+          const sectionMap: Record<SectionType, SectionValue> = {
+            verse: "kita", hook: "nakarat", bridge: "kopru", intro: "kita", outro: "kita"
+          };
+          setSection(sectionMap[type] ?? "kita");
+        }}
+        writtenLineCount={currentLyrics.trim().split("\n").filter(Boolean).length}
+      />
     </div>
   );
 }
