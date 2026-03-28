@@ -5,5 +5,8 @@ import { getEnv } from "./env";
 // because the system environment may have an empty ANTHROPIC_API_KEY="" that
 // takes precedence over .env.local in all standard loading mechanisms.
 export function getAnthropicClient(): Anthropic {
-  return new Anthropic({ apiKey: getEnv("ANTHROPIC_API_KEY") });
+  const key = getEnv("ANTHROPIC_API_KEY");
+  // Pass undefined when empty so the SDK reads process.env.ANTHROPIC_API_KEY itself.
+  // Passing "" causes an "authentication method" error in the SDK.
+  return new Anthropic({ apiKey: key || undefined });
 }
