@@ -383,7 +383,7 @@ function AutosaveToast({
 // Main component
 // ---------------------------------------------------------------------------
 export default function LyricsEditor() {
-  const { currentBPM, targetSyllables, currentStyle, setCurrentLyrics } =
+  const { currentBPM, targetSyllables, currentStyle, setCurrentLyrics, pendingLines, setPendingLines } =
     useMusicContext();
 
   const [text, setText]               = useState("");
@@ -398,6 +398,7 @@ export default function LyricsEditor() {
   const [projects, setProjects]             = useState<SavedProject[]>([]);
   const [showAutosaveToast, setShowAutosaveToast] = useState(false);
   const [savedFlash, setSavedFlash]         = useState(false);
+  const [showGhostToast, setShowGhostToast] = useState(false);
 
   const textareaRef       = useRef<HTMLTextAreaElement>(null);
   const popoverAnchorRef  = useRef<HTMLDivElement>(null);
@@ -427,6 +428,18 @@ export default function LyricsEditor() {
 
   // ── Sync lyrics to context
   useEffect(() => { setCurrentLyrics(text); }, [text, setCurrentLyrics]);
+
+  // ── Consume pendingLines from GhostWriter — append, clear, show toast
+  useEffect(() => {
+    if (pendingLines.length === 0) return;
+    setText((prev) => {
+      const trimmed = prev.endsWith("\n") || prev === "" ? prev : prev + "\n";
+      return trimmed + pendingLines.join("\n");
+    });
+    setPendingLines([]);
+    setShowGhostToast(true);
+    setTimeout(() => setShowGhostToast(false), 2000);
+  }, [pendingLines, setPendingLines]);
 
   // ── Auto-resize textarea
   useEffect(() => {
@@ -813,6 +826,13 @@ export default function LyricsEditor() {
       {error && (
         <div className="rounded-xl bg-red-950 border border-red-800 px-4 py-2 text-sm text-red-300">
           {error}
+        </div>
+      )}
+
+      {/* Ghost Writer toast */}
+      {showGhostToast && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-950 border border-emerald-700 rounded-xl text-sm text-emerald-300 animate-pulse">
+          👻 Ghost Writer&apos;dan eklendi ✓
         </div>
       )}
 

@@ -6,12 +6,14 @@ import Metronome from "@/components/metronome/Metronome";
 import FlowPanel from "@/components/flow/FlowPanel";
 import LyricsEditor from "@/components/lyrics/LyricsEditor";
 import BreathTrainer from "@/components/breath/BreathTrainer";
+import GhostWriter from "@/components/ghostwriter/GhostWriter";
 
 const TABS = [
-  { id: "metronome", emoji: "🥁", label: "Metronom" },
-  { id: "flow",      emoji: "🎤", label: "Flow" },
-  { id: "lyrics",    emoji: "✍️", label: "Söz Editörü" },
-  { id: "breath",    emoji: "💨", label: "Nefes" },
+  { id: "metronome",   emoji: "🥁", label: "Metronom"    },
+  { id: "flow",        emoji: "🎤", label: "Flow"         },
+  { id: "lyrics",      emoji: "✍️", label: "Söz Editörü" },
+  { id: "ghostwriter", emoji: "👻", label: "Ghost Writer" },
+  { id: "breath",      emoji: "💨", label: "Nefes"        },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -73,10 +75,11 @@ export default function Home() {
 
       {/* ── Tab content ────────────────────────────────────────────── */}
       <main className="flex-1 max-w-2xl w-full mx-auto px-4 py-6">
-        {activeTab === "metronome" && <Metronome />}
-        {activeTab === "flow"      && <FlowPanel />}
-        {activeTab === "lyrics"    && <LyricsEditor />}
-        {activeTab === "breath"    && <BreathTrainer />}
+        {activeTab === "metronome"   && <Metronome />}
+        {activeTab === "flow"        && <FlowPanel />}
+        {activeTab === "lyrics"      && <LyricsEditor />}
+        {activeTab === "ghostwriter" && <GhostWriter />}
+        {activeTab === "breath"      && <BreathTrainer />}
       </main>
 
       {/* ── Footer ─────────────────────────────────────────────────── */}
