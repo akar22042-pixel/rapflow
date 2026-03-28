@@ -7,12 +7,14 @@ import FlowPanel from "@/components/flow/FlowPanel";
 import LyricsEditor from "@/components/lyrics/LyricsEditor";
 import BreathTrainer from "@/components/breath/BreathTrainer";
 import GhostWriter from "@/components/ghostwriter/GhostWriter";
+import BeatMatcher from "@/components/beatmatch/BeatMatcher";
 
 const TABS = [
   { id: "metronome",   emoji: "🥁", label: "Metronom"    },
   { id: "flow",        emoji: "🎤", label: "Flow"         },
   { id: "lyrics",      emoji: "✍️", label: "Söz Editörü" },
   { id: "ghostwriter", emoji: "👻", label: "Ghost Writer" },
+  { id: "beatmatch",   emoji: "🎵", label: "Beat Match"   },
   { id: "breath",      emoji: "💨", label: "Nefes"        },
 ] as const;
 
