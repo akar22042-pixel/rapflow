@@ -187,7 +187,7 @@ export default function GhostWriter() {
   }, []);
 
   const lyricLines = currentLyrics.trim().split("\n").filter(Boolean);
-  const canWrite   = profile !== null || lyricLines.length >= 3;
+  const canWrite   = profile !== null || lyricLines.length >= 3 || characterDNA !== null;
   const targetSyl  = targetSyllables * 4; // bars × beats
 
   // ── Analyze
@@ -562,7 +562,7 @@ export default function GhostWriter() {
 
       {/* ── 2. Ghost Writer ───────────────────────────────────────────────── */}
       <div className={["flex flex-col gap-4 p-5 bg-zinc-900 rounded-2xl border transition-opacity",
-        canWrite ? "border-zinc-700 opacity-100" : "border-zinc-800 opacity-50 pointer-events-none",
+        canWrite ? "border-zinc-700 opacity-100" : "border-zinc-800 opacity-60",
       ].join(" ")}>
         <div>
           <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Ghost Writer</p>
