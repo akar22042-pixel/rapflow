@@ -71,10 +71,33 @@ interface ContinueResponse {
 // System prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM = `Sen uzman bir Türkçe rap söz yazarı ve flow analistsin.
+const SYSTEM = `Sen güçlü, özgün Türkçe rap sözleri üreten ve analiz eden bir yapay zekasın.
 Türkçe fonetiği, ünlü uyumu, ünsüz kümeleri ve rap metriğini derinlemesine anlıyorsun.
-Türkçe sokak argosunu, argo kelimeleri ve kültürel referansları bağlama göre kullanabiliyorsun.
+Türkçe sokak argosunu ve kültürel referansları bağlama göre yerinde kullanabiliyorsun.
+Sana bir karakter verildiğinde, O KARAKTERSİN — dışarıdan anlatmaz, içeriden yaşarsın.
+Klişeyi reddedersin. Her satırın somut, özgün ve gerçek bir insan sesinden gelmesini sağlarsın.
 Her zaman yalnızca geçerli JSON döndür — markdown bloğu, yorum veya JSON dışında hiçbir şey yazma.`;
+
+// ---------------------------------------------------------------------------
+// Strong vs. weak line examples — injected into every generate/continue prompt
+// ---------------------------------------------------------------------------
+const STRONG_WEAK_EXAMPLES = `
+GÜÇLÜ vs. ZAYIF SATIR ÖRNEKLERİ (bunları referans al):
+❌ ZAYIF: "Sokaklar ağlıyor, kalbim yandı bu gece"           → klişe, soyut, görsel yok
+✓ GÜÇLÜ: "Bodrum katı, tek ampul, fatura kapalı üç ay"       → somut sahne, spesifik detay
+
+❌ ZAYIF: "Hayat zor ama ben güçlüyüm, vazgeçmem"            → motivasyon posteri
+✓ GÜÇLÜ: "Annem saat beşte kalkar, ellerim onun elleri"      → duygusal, kişisel, görsel
+
+❌ ZAYIF: "Düşmanlarım çok ama ben kazanacağım"               → belirsiz, sloganlaşmış
+✓ GÜÇLÜ: "Yüzüme gülen adama bile borçluyum kira"           → özgül, gerçekçi, karmaşık
+
+❌ ZAYIF: "Paranın olmadığı yerde aşk da olmaz"              → aforizm, sığ
+✓ GÜÇLÜ: "Son yüz lirayı böldük, o sigara ben ekmek"        → sahne, detay, iki karakter
+
+❌ ZAYIF: "Gözlerim yaşlı, içim boş, yolum uzun"             → duygusal liste, anlamsız
+✓ GÜÇLÜ: "Babam hâlâ aynı koltuğa oturuyor, on yıldır"     → zaman + mekân + karakter
+`;
 
 // ---------------------------------------------------------------------------
 // Target syllables per line derived from BPM
@@ -181,16 +204,20 @@ function generatePrompt(
   flowStyle: string | undefined,
   rapperStyle: string | undefined,
   rhythmPattern: string | undefined,
+  characterDNA?: CharacterDNA,
 ): string {
   const ts = targetSyllables(bpm);
-  const isSokak = userStyle.tone === "sokak";
+  const isSokak = userStyle.tone === "sokak" || characterDNA?.tone === "agresif" || characterDNA?.tone === "öfkeli";
   const flowInstr = flowStyleInstruction(flowStyle, ts);
   const rapperInstr = rapperRhythmInstruction(rapperStyle);
   const rhythmInstr = rhythmPatternInstruction(rhythmPattern);
 
-  return `Sen bu sanatçının ghostwriter'ısın. Sanatçının tarzını mükemmel şekilde taklit etmelisin.
-
-SANATÇI STİL PROFİLİ:
+  const identityBlock = characterDNA
+    ? `SEN ${characterDNA.name.toUpperCase()}'SIN.
+Birinci şahıs olarak düşün, hisset, yaz. Dışarıdan anlatma — içeriden yaşa.
+"O" diye değil, "ben" diye konuş. Bu karakterin deri altından bak dünyaya.
+İmza kelimelerin: ${characterDNA.signatureWords.join(", ")} — bunları organik olarak kullan.`
+    : `SANATÇI STİL PROFİLİ:
 - Ton: ${userStyle.tone}
 - Kelime Dağarcığı: ${userStyle.vocabulary.join(", ")}
 - Sevdiği Kelimeler: ${userStyle.favoriteWords.join(", ")}
@@ -200,33 +227,43 @@ SANATÇI STİL PROFİLİ:
 - Eşsiz Özellikler: ${userStyle.uniqueTraits.join("; ")}
 ${userStyle.commonStructures?.length ? `- Cümle Yapıları: ${userStyle.commonStructures.join("; ")}` : ""}
 ${userStyle.metaphorTypes?.length ? `- Metafor Türleri: ${userStyle.metaphorTypes.join("; ")}` : ""}
-${userStyle.sentenceLength ? `- Cümle Uzunluğu: ${userStyle.sentenceLength}` : ""}
+${userStyle.sentenceLength ? `- Cümle Uzunluğu: ${userStyle.sentenceLength}` : ""}`;
 
-GÖREV PARAMETRELERİ:
-- BPM: ${bpm}
-- Kafiye şeması: ${rhymeScheme || userStyle.rhymePattern}
-- Konu/Prompt: "${prompt}"
-${isSokak ? "- DİKKAT: Sokak tonu — gündelik Türkçe argosunu, sokak dilini kullan\n" : ""}
-${flowInstr}
+  const forbiddenExtra = characterDNA?.forbiddenWords.length
+    ? `\n- Karakterin yasaklı kelimeleri: ${characterDNA.forbiddenWords.join(", ")} (ASLA kullanma)`
+    : "";
+
+  return `${identityBlock}
+
+GÖREV:
+Konu/Prompt: "${prompt}"
+BPM: ${bpm} → hedef hece/satır: ${ts.ideal} (aralık: ${ts.min}–${ts.max})
+Kafiye şeması: ${rhymeScheme || userStyle.rhymePattern}
+${isSokak ? "Ton: sokak/agresif — gündelik Türkçe argosunu, sokak dilini kullan\n" : ""}${flowInstr}
 ${rapperInstr}${rhythmInstr}
+${STRONG_WEAK_EXAMPLES}
 
-YAZIM KURALLARI — BUNLARA KESİNLİKLE UY:
+ZORUNLU KURALLAR:
 1. Tam olarak 2-4 satır yaz
-2. Her satır kendi başına anlamlı ve tamamlanmış bir düşünce olmalı
-3. Kelimeler arasında mantıksal ve duygusal bağ kurulmalı — anlamsız dizme yasak
-4. KLİŞELERDEN KAÇIN: "sokaklar ağlıyor", "kalbim yandı", "hayat zor", "gözlerim yaşlı", "yolum uzun" gibi ifadeler kullanma
-5. Türkçe günlük konuşma diline yakın, doğal ses — yapay veya edebi değil
-6. Her satırda güçlü bir somut imge veya spesifik bir detay olsun (soyut genel laflardan kaçın)
-7. Kafiye şemasına uy: ${rhymeScheme || userStyle.rhymePattern}
-8. Sanatçının sesini ve tonunu koru
-9. Türkçe yaz, hiçbir İngilizce kelime kullanma
+2. İLK SATIR EN GÜÇLÜ SATIR OLMALI — beklenmedik, sürpriz bir açıdan gir konuya; in medias res başla
+3. Her satır somut bir sahne, spesifik bir detay veya keskin bir imge içermeli — genel soyut ifadeler yasak
+4. Satırlar arasında mantıksal ve duygusal devamlılık olsun — kopuk kelime dizimi yasak
+5. Kafiye şemasına uy: ${rhymeScheme || userStyle.rhymePattern}
+6. Türkçe yaz, hiçbir İngilizce kelime kullanma
+7. ${characterDNA ? "Karakterin sesi tutarlı olsun — onun yaşadıklarından, gördüklerinden, hissettiklerinden yaz" : "Sanatçının ses tonunu ve stilini koru"}
+
+YASAK:
+- "sokaklar ağlıyor", "kalbim yandı", "hayat zor", "gözlerim yaşlı", "yolum uzun", "vazgeçmem", "güçlüyüm" gibi klişeler
+- Motivasyon posteri ve aforizm tarzı sloganlar
+- Kimsenin yaşamadığı, kimseye ait olmayan soyut duygusal ifadeler
+- Üç veya daha fazla soyut sıfatı arka arkaya dizmek${forbiddenExtra}
 
 Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
 {
   "lines": ["satır1", "satır2", ...],
   "syllableCounts": [<satır1 hece sayısı>, <satır2 hece sayısı>, ...],
   "rhymesWith": "<yeni satırların kafiye kurduğu kelime/ek>",
-  "styleNotes": "<bu satırların sanatçı stiline nasıl uyduğuna dair kısa Türkçe not>",
+  "styleNotes": "<bu satırların ${characterDNA ? "karakterin sesine" : "sanatçı stiline"} nasıl uyduğuna dair kısa Türkçe not>",
   "flowUsed": "<kullanılan flow stilinin kısa adı>"
 }`;
 }
@@ -235,9 +272,10 @@ function continuePrompt(
   lyrics: string,
   userStyle: StyleProfile,
   bpm: number,
+  characterDNA?: CharacterDNA,
 ): string {
   const ts = targetSyllables(bpm);
-  const isSokak = userStyle.tone === "sokak";
+  const isSokak = userStyle.tone === "sokak" || characterDNA?.tone === "agresif" || characterDNA?.tone === "öfkeli";
   const allLines = lyrics.trim().split("\n").filter(Boolean);
   // Use last 6 lines for context, track total count for section detection
   const contextLines = allLines.slice(-6).join("\n");
@@ -245,9 +283,12 @@ function continuePrompt(
   const nextSection =
     lineCount < 4 ? "verse" : lineCount < 8 ? "hook" : lineCount < 12 ? "verse" : "bridge";
 
-  return `Sen bu sanatçının ghostwriter'ısın. Mevcut sözleri doğal bir şekilde devam ettir.
-
-SANATÇI STİL PROFİLİ:
+  const identityBlock = characterDNA
+    ? `SEN ${characterDNA.name.toUpperCase()}'SIN.
+Yazdığın sözleri devam ettiriyorsun — birinci şahıs, içeriden, kendi sesinle.
+Dışarıdan bakma. O anı, o duyguyu, o sahneyi sen yaşıyorsun.
+İmza kelimelerin: ${characterDNA.signatureWords.join(", ")}`
+    : `SANATÇI STİL PROFİLİ:
 - Ton: ${userStyle.tone}
 - Kelime Dağarcığı: ${userStyle.vocabulary.join(", ")}
 - Sevdiği Kelimeler: ${userStyle.favoriteWords.join(", ")}
@@ -255,29 +296,43 @@ SANATÇI STİL PROFİLİ:
 - Eşsiz Özellikler: ${userStyle.uniqueTraits.join("; ")}
 ${userStyle.commonStructures?.length ? `- Cümle Yapıları: ${userStyle.commonStructures.join("; ")}` : ""}
 ${userStyle.metaphorTypes?.length ? `- Metafor Türleri: ${userStyle.metaphorTypes.join("; ")}` : ""}
-${isSokak ? "- Sokak tonu: argo ve gündelik dil kullan" : ""}
+${isSokak ? "- Sokak tonu: argo ve gündelik dil kullan" : ""}`;
 
-SON 6 SATIR (BAĞLAM):
+  const forbiddenExtra = characterDNA?.forbiddenWords.length
+    ? `\n- Karakterin yasaklı kelimeleri: ${characterDNA.forbiddenWords.join(", ")} (ASLA kullanma)`
+    : "";
+
+  const sectionGoal = nextSection === "hook"
+    ? "Hook için 2-4 satır yaz — tekrarlanabilir, akılda kalıcı, duygusal doruk"
+    : nextSection === "bridge"
+    ? "Bridge için 2-4 satır yaz — yön değişikliği, beklenmedik bir bakış açısı, duygusal kırılma"
+    : "Verse için 4-6 satır yaz — hikayeyi ilerlet, yeni bir detay veya sahne ekle";
+
+  return `${identityBlock}
+
+MEVCUT SÖZLER (son ${Math.min(6, lineCount)} satır):
 """
 ${contextLines}
 """
-(Toplam ${lineCount} satır yazıldı)
+(Toplam yazılan: ${lineCount} satır)
 
-GÖREV PARAMETRELERİ:
-- BPM: ${bpm} → satır başına hedef hece: ${ts.ideal} (aralık: ${ts.min}–${ts.max})
-- Yazılacak bölüm: ${nextSection}
-- ${nextSection === "hook" ? "Hook için 2-4 tekrarlanabilir, akılda kalıcı satır yaz" :
-    nextSection === "bridge" ? "Bridge için 2-4 yön değiştiren, duygusal kırılma yaratan satır yaz" :
-    "Verse için 4-6 satır yaz, hikayeyi ilerlet"}
+GÖREV: ${sectionGoal}
+BPM: ${bpm} → hedef hece/satır: ${ts.ideal} (aralık: ${ts.min}–${ts.max})
+${isSokak ? "Ton: sokak/agresif — gündelik Türkçe argosunu kullan\n" : ""}
+${STRONG_WEAK_EXAMPLES}
 
-YAZIM KURALLARI:
-1. Anlatının duygusal ve tematik akışını koru, hikayeyi ilerlet — mevcut temayı ve son satırın duygusunu organik olarak sürdür, kopukluk yok
+ZORUNLU KURALLAR:
+1. Anlatının duygusal ve tematik akışını koru — son satırın enerjisinden organik olarak çık, kopukluk yok
 2. Her satır ${ts.min}–${ts.max} hece arasında olmalı
-3. Son satırın kafiye şemasını devam ettir
-4. Sanatçının sesini koru — sanki aynı kişi yazmış gibi hissettir
-5. KLİŞEDEN KAÇIN: "sokaklar ağlıyor", "kalbim yandı" gibi ifadeler kullanma
-6. Her satırda somut bir imge veya spesifik detay olsun
-7. Türkçe yaz, hiçbir İngilizce kelime kullanma
+3. Son satırların kafiye şemasını devam ettir
+4. ${characterDNA ? "Karakterin sesi tutarlı kalsın — sanki aynı insan, aynı nefeste devam ediyor" : "Sanatçının sesini koru — sanki aynı kişi yazmış gibi"}
+5. Her yeni satırda somut bir imge, sahne veya spesifik detay olsun
+6. Türkçe yaz, hiçbir İngilizce kelime kullanma
+
+YASAK:
+- "sokaklar ağlıyor", "kalbim yandı", "hayat zor", "gözlerim yaşlı", "yolum uzun" gibi klişeler
+- Motivasyon posteri sloganları
+- Soyut duygusal liste satırları ("içim boş, ruhum dolu, kalbim kırık")${forbiddenExtra}
 
 Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
 {
@@ -345,11 +400,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     mode === "analyze"
       ? analyzePrompt(lyrics!, bpm)
       : mode === "generate"
-      ? generatePrompt(userStyle!, prompt!, bpm, rhymeScheme ?? "AABB", flowStyle, rapperStyle, rhythmPattern)
-      : continuePrompt(lyrics!, userStyle!, bpm)
+      ? generatePrompt(userStyle!, prompt!, bpm, rhymeScheme ?? "AABB", flowStyle, rapperStyle, rhythmPattern, characterDNA)
+      : continuePrompt(lyrics!, userStyle!, bpm, characterDNA)
   );
 
-  const maxTokens = mode === "analyze" ? 900 : mode === "generate" ? 700 : 800;
+  const maxTokens = mode === "analyze" ? 900 : mode === "generate" ? 800 : 800;
 
   try {
     const message = await getAnthropicClient().messages.create({
