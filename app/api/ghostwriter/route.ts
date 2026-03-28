@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAnthropicClient } from "@/lib/anthropic";
 import { FLOW_PATTERNS_BY_ARTIST } from "@/lib/flowPatterns";
+import { CharacterDNA, getCharacterPrompt } from "@/lib/characterDNA";
 
 const MODEL = "claude-sonnet-4-20250514";
 
@@ -32,9 +33,10 @@ interface GhostwriterRequest {
   bpm: number;
   style?: string;
   rhymeScheme?: string;
-  flowStyle?: string;    // "hızlı" | "yavaş" | "triplet" | "serbest" | "aynı"
-  rapperStyle?: string;  // rapper name for rhythm injection
+  flowStyle?: string;     // "hızlı" | "yavaş" | "triplet" | "serbest" | "aynı"
+  rapperStyle?: string;   // rapper name for rhythm injection
   rhythmPattern?: string; // e.g. "[3-2-3]"
+  characterDNA?: CharacterDNA;
 }
 
 interface AnalyzeResponse {
@@ -312,7 +314,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { mode, lyrics, userStyle, prompt, bpm, rhymeScheme, flowStyle, rapperStyle, rhythmPattern } = body;
+  const { mode, lyrics, userStyle, prompt, bpm, rhymeScheme, flowStyle, rapperStyle, rhythmPattern, characterDNA } = body;
 
   if (!mode || !["analyze", "generate", "continue"].includes(mode)) {
     return NextResponse.json(
@@ -336,14 +338,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "lyrics and userStyle are required for continue mode" }, { status: 400 });
   }
 
-  const userPrompt =
+  // Build character prefix (injected at the START of every user prompt)
+  const characterPrefix = characterDNA ? getCharacterPrompt(characterDNA) + "\n\n---\n\n" : "";
+
+  const userPrompt = characterPrefix + (
     mode === "analyze"
       ? analyzePrompt(lyrics!, bpm)
       : mode === "generate"
       ? generatePrompt(userStyle!, prompt!, bpm, rhymeScheme ?? "AABB", flowStyle, rapperStyle, rhythmPattern)
-      : continuePrompt(lyrics!, userStyle!, bpm);
+      : continuePrompt(lyrics!, userStyle!, bpm)
+  );
 
-  const maxTokens = mode === "analyze" ? 900 : mode === "generate" ? 600 : 700;
+  const maxTokens = mode === "analyze" ? 900 : mode === "generate" ? 700 : 800;
 
   try {
     const message = await getAnthropicClient().messages.create({

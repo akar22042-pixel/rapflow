@@ -10,6 +10,12 @@ import {
   clearStyleProfile,
   getStyleSummary,
 } from "@/lib/styleProfile";
+import {
+  CharacterDNA,
+  loadCharacterDNA,
+  saveCharacterDNA,
+} from "@/lib/characterDNA";
+import CharacterCreator from "./CharacterCreator";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -138,6 +144,10 @@ export default function GhostWriter() {
   const { currentBPM, currentLyrics, targetSyllables, setPendingLines, setStyleProfile: setContextProfile } =
     useMusicContext();
 
+  // Character DNA
+  const [characterDNA, setCharacterDNA] = useState<CharacterDNA | null>(null);
+  const [showCharCreator, setShowCharCreator] = useState(false);
+
   // Style profile
   const [profile, setProfile]           = useState<StyleProfile | null>(null);
   const [analyzing, setAnalyzing]       = useState(false);
@@ -173,6 +183,7 @@ export default function GhostWriter() {
   useEffect(() => {
     setProfile(loadStyleProfile());
     setLikedLines(loadLiked());
+    setCharacterDNA(loadCharacterDNA());
   }, []);
 
   const lyricLines = currentLyrics.trim().split("\n").filter(Boolean);
@@ -188,7 +199,7 @@ export default function GhostWriter() {
       const res  = await fetch("/api/ghostwriter", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ mode: "analyze", lyrics: currentLyrics, bpm: currentBPM }),
+        body:    JSON.stringify({ mode: "analyze", lyrics: currentLyrics, bpm: currentBPM, characterDNA: characterDNA ?? undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -246,6 +257,7 @@ export default function GhostWriter() {
           flowStyle:     fl !== "aynı" ? fl : undefined,
           rapperStyle:   rp ?? undefined,
           rhythmPattern: rhythmPattern !== "[3-2-3]" ? rhythmPattern : undefined,
+          characterDNA:  characterDNA ?? undefined,
         }),
       });
       const data = await res.json();
@@ -280,10 +292,11 @@ export default function GhostWriter() {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
-          mode:      "continue",
-          lyrics:    currentLyrics,
-          userStyle: profile ?? buildFallbackProfile(),
-          bpm:       currentBPM,
+          mode:        "continue",
+          lyrics:      currentLyrics,
+          userStyle:   profile ?? buildFallbackProfile(),
+          bpm:         currentBPM,
+          characterDNA: characterDNA ?? undefined,
         }),
       });
       const data = await res.json();
@@ -340,7 +353,7 @@ export default function GhostWriter() {
       const res  = await fetch("/api/ghostwriter", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ mode: "analyze", lyrics, bpm: currentBPM }),
+        body:    JSON.stringify({ mode: "analyze", lyrics, bpm: currentBPM, characterDNA: characterDNA ?? undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -365,8 +378,92 @@ export default function GhostWriter() {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
+  const TONE_LABELS: Record<string, string> = {
+    agresif: "🔥 Agresif", melankolik: "🌙 Melankolik", mağrur: "👑 Mağrur",
+    umursamaz: "😶 Umursamaz", öfkeli: "⚡ Öfkeli", yorgun: "😮‍💨 Yorgun", umutlu: "🌅 Umutlu",
+  };
+
   return (
     <div className="flex flex-col gap-5 w-full max-w-2xl mx-auto">
+
+      {/* ── 0. Character DNA ──────────────────────────────────────────────── */}
+      {showCharCreator && (
+        <CharacterCreator
+          existing={characterDNA}
+          onSave={(dna) => {
+            saveCharacterDNA(dna);
+            setCharacterDNA(dna);
+            setShowCharCreator(false);
+          }}
+          onClose={() => setShowCharCreator(false)}
+        />
+      )}
+
+      <div className="flex flex-col gap-3 p-5 bg-zinc-900 rounded-2xl border border-zinc-700">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Karakter DNA</p>
+            <h3 className="text-sm font-bold text-white">🎭 Kim Olduğunu Belirle</h3>
+          </div>
+          {characterDNA && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowCharCreator(true)}
+                className="text-[10px] text-zinc-500 hover:text-violet-400 transition-colors font-mono"
+              >Düzenle</button>
+              <button
+                onClick={() => { setCharacterDNA(null); if (typeof window !== "undefined") localStorage.removeItem("rapflow_character_dna"); }}
+                className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors font-mono"
+              >Sıfırla</button>
+            </div>
+          )}
+        </div>
+
+        {characterDNA ? (
+          <div className="flex flex-col gap-3">
+            {/* Active banner */}
+            <div className="flex items-center gap-3 bg-violet-500/10 border border-violet-500/30 rounded-xl px-4 py-3">
+              <span className="text-2xl">🎭</span>
+              <div className="min-w-0">
+                <p className="text-sm font-black text-white">{characterDNA.name}</p>
+                <p className="text-[10px] text-violet-300">{characterDNA.age} yaş · {characterDNA.origin}</p>
+              </div>
+              <span className="ml-auto text-[10px] bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full font-semibold">Aktif</span>
+            </div>
+            <p className="text-xs text-zinc-500 italic leading-relaxed line-clamp-2">{characterDNA.backstory}</p>
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full border bg-violet-500/15 border-violet-500/30 text-violet-300">
+                {TONE_LABELS[characterDNA.tone] ?? characterDNA.tone}
+              </span>
+              <span className="text-[10px] px-2.5 py-1 rounded-full border bg-zinc-800 border-zinc-700 text-zinc-400">
+                {characterDNA.lyricalStyle}
+              </span>
+              {characterDNA.struggles.slice(0, 4).map(s => (
+                <span key={s} className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500">{s}</span>
+              ))}
+            </div>
+            {characterDNA.signatureWords.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {characterDNA.signatureWords.slice(0, 5).map(w => (
+                  <span key={w} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono">{w}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-zinc-500 leading-relaxed">
+              Karakterini oluştur — kim olduğunu, ne yaşadığını ve nasıl konuştuğunu tanımla. Ghost Writer bu karakterin sesiyle yazar.
+            </p>
+            <button
+              onClick={() => setShowCharCreator(true)}
+              className="w-full py-3 rounded-xl bg-violet-600 border border-violet-500 text-white text-sm font-semibold hover:bg-violet-500 transition-colors"
+            >
+              🎭 Karakterini Oluştur
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* ── 1. Style Analysis ────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4 p-5 bg-zinc-900 rounded-2xl border border-zinc-700">
