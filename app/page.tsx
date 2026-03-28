@@ -8,6 +8,7 @@ import LyricsEditor from "@/components/lyrics/LyricsEditor";
 import BreathTrainer from "@/components/breath/BreathTrainer";
 import GhostWriter from "@/components/ghostwriter/GhostWriter";
 import BeatMatcher from "@/components/beatmatch/BeatMatcher";
+import CypherMode from "@/components/cypher/CypherMode";
 
 const TABS = [
   { id: "metronome",   emoji: "🥁", label: "Metronom"    },
@@ -15,6 +16,7 @@ const TABS = [
   { id: "lyrics",      emoji: "✍️", label: "Söz Editörü" },
   { id: "ghostwriter", emoji: "👻", label: "Ghost Writer" },
   { id: "beatmatch",   emoji: "🎵", label: "Beat Match"   },
+  { id: "cypher",      emoji: "🔄", label: "Cypher"       },
   { id: "breath",      emoji: "💨", label: "Nefes"        },
 ] as const;
 
@@ -81,6 +83,8 @@ export default function Home() {
         {activeTab === "flow"        && <FlowPanel />}
         {activeTab === "lyrics"      && <LyricsEditor />}
         {activeTab === "ghostwriter" && <GhostWriter />}
+        {activeTab === "beatmatch"   && <BeatMatcher />}
+        {activeTab === "cypher"      && <CypherMode />}
         {activeTab === "breath"      && <BreathTrainer />}
       </main>
 

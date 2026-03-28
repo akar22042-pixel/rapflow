@@ -200,6 +200,7 @@ export default function BeatMatcher() {
   const [isDragging, setIsDragging] = useState(false);
   const [history, setHistory]       = useState<BPMHistoryItem[]>([]);
   const [appliedFlash, setAppliedFlash] = useState(false);
+  const [hasBuffer, setHasBuffer]       = useState(false);
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -237,6 +238,7 @@ export default function BeatMatcher() {
     setFileName(file.name);
     setAnalyzing(true);
     setResult(null);
+    setHasBuffer(false);
     setPlayhead(0);
     setIsPlaying(false);
     cancelAnimationFrame(rafRef.current);
@@ -250,6 +252,7 @@ export default function BeatMatcher() {
       await ctx.close();
 
       bufferRef.current = buffer;
+      setHasBuffer(true);
       setDuration(buffer.duration);
 
       // Detect BPM in next tick to allow UI to update
@@ -385,7 +388,7 @@ export default function BeatMatcher() {
       </div>
 
       {/* ── Waveform canvas ───────────────────────────────────────────── */}
-      {bufferRef.current && (
+      {hasBuffer && (
         <div className="rounded-xl overflow-hidden border border-zinc-700">
           <canvas
             ref={canvasRef}
@@ -479,7 +482,7 @@ export default function BeatMatcher() {
 
             <button
               onClick={togglePlayback}
-              disabled={!bufferRef.current}
+              disabled={!hasBuffer}
               className={[
                 "px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors border",
                 isPlaying
