@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { MusicProvider } from "@/lib/MusicContext";
+import { ThemeProvider } from "@/lib/ThemeContext";
 
 export const metadata: Metadata = {
   title: "RapFlow",
@@ -15,7 +16,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <MusicProvider>{children}</MusicProvider>
+        <ThemeProvider>
+          <MusicProvider>{children}</MusicProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

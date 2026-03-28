@@ -2,10 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Default theme (violet) ─────────────────────────────────── */
 :root {
   --background: #0a0a0a;
   --foreground: #ededed;
+
+  /* Theme accent — RGB triplets so we can use opacity modifiers */
+  --t300: 196 181 253;   /* violet-300 */
+  --t400: 167 139 250;   /* violet-400 */
+  --t500: 139 92 246;    /* violet-500 */
+  --t600: 124 58 237;    /* violet-600 */
+  --t700: 109 40 217;    /* violet-700 */
 }
+
+/* ── Named themes ────────────────────────────────────────────── */
+.theme-violet {
+  --t300: 196 181 253;
+  --t400: 167 139 250;
+  --t500: 139 92 246;
+  --t600: 124 58 237;
+  --t700: 109 40 217;
+}
+.theme-emerald {
+  --t300: 110 231 183;
+  --t400: 52 211 153;
+  --t500: 16 185 129;
+  --t600: 5 150 105;
+  --t700: 4 120 87;
+}
+.theme-amber {
+  --t300: 252 211 77;
+  --t400: 251 191 36;
+  --t500: 245 158 11;
+  --t600: 217 119 6;
+  --t700: 180 83 9;
+}
+.theme-rose {
+  --t300: 253 164 175;
+  --t400: 251 113 133;
+  --t500: 244 63 94;
+  --t600: 225 29 72;
+  --t700: 190 18 60;
+}
+.theme-cyan {
+  --t300: 103 232 249;
+  --t400: 34 211 238;
+  --t500: 6 182 212;
+  --t600: 8 145 178;
+  --t700: 14 116 144;
+}
+
+/* ── Override Tailwind violet-* to use theme variables ──────── */
+.text-violet-300  { color: rgb(var(--t300)) !important; }
+.text-violet-400  { color: rgb(var(--t400)) !important; }
+.text-violet-500  { color: rgb(var(--t500)) !important; }
+.bg-violet-400    { background-color: rgb(var(--t400)) !important; }
+.bg-violet-500    { background-color: rgb(var(--t500)) !important; }
+.bg-violet-600    { background-color: rgb(var(--t600)) !important; }
+.bg-violet-700    { background-color: rgb(var(--t700)) !important; }
+.border-violet-500 { border-color: rgb(var(--t500)) !important; }
+.border-violet-600 { border-color: rgb(var(--t600)) !important; }
+.ring-violet-500  { --tw-ring-color: rgb(var(--t500)) !important; }
+.hover\:bg-violet-600:hover  { background-color: rgb(var(--t600)) !important; }
+.hover\:border-violet-500:hover { border-color: rgb(var(--t500)) !important; }
+.hover\:text-violet-300:hover { color: rgb(var(--t300)) !important; }
+.focus\:border-violet-500:focus { border-color: rgb(var(--t500)) !important; }
+.focus\:ring-violet-500:focus { --tw-ring-color: rgb(var(--t500)) !important; }
+
+/* opacity variants */
+.bg-violet-500\/10 { background-color: rgb(var(--t500) / 0.10) !important; }
+.bg-violet-500\/15 { background-color: rgb(var(--t500) / 0.15) !important; }
+.bg-violet-500\/20 { background-color: rgb(var(--t500) / 0.20) !important; }
+.bg-violet-500\/30 { background-color: rgb(var(--t500) / 0.30) !important; }
+.border-violet-500\/30 { border-color: rgb(var(--t500) / 0.30) !important; }
+.ring-violet-500\/30 { --tw-ring-color: rgb(var(--t500) / 0.30) !important; }
+.text-violet-400\/70 { color: rgb(var(--t400) / 0.70) !important; }
 
 body {
   color: var(--foreground);

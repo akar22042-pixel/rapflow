@@ -614,6 +614,52 @@ export default function LyricsEditor() {
   const avgSyllables  = totalLines > 0 ? Math.round(totalSyllables / totalLines) : 0;
 
   // ------------------------------------------------------------------
+  // PDF export
+  // ------------------------------------------------------------------
+  const exportPDF = useCallback(() => {
+    const title = "RapFlow — Şarkı Sözleri";
+    const content = lines
+      .map((line, i) => {
+        const syl = countLineSyllables(line);
+        const num = String(i + 1).padStart(2, "0");
+        return `<tr><td class="num">${num}</td><td class="line">${line || "&nbsp;"}</td><td class="syl">${line.trim() ? syl : ""}</td></tr>`;
+      })
+      .join("\n");
+
+    const html = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>${title}</title>
+<style>
+  body { font-family: 'Courier New', monospace; background: #fff; color: #111; margin: 40px; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .meta { font-size: 0.8rem; color: #666; margin-bottom: 24px; }
+  table { border-collapse: collapse; width: 100%; }
+  tr { border-bottom: 1px solid #eee; }
+  td { padding: 4px 8px; vertical-align: top; }
+  .num { color: #aaa; font-size: 0.75rem; width: 32px; text-align: right; padding-right: 12px; }
+  .line { font-size: 1rem; }
+  .syl { color: #888; font-size: 0.75rem; width: 32px; text-align: right; }
+  @media print { body { margin: 20px; } }
+</style>
+</head>
+<body>
+<h1>${title}</h1>
+<div class="meta">Hedef: ${targetSyllables} hece/satır &nbsp;|&nbsp; Toplam satır: ${totalLines} &nbsp;|&nbsp; Ort. hece: ${avgSyllables}</div>
+<table>${content}</table>
+</body>
+</html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 400);
+  }, [lines, targetSyllables, totalLines, avgSyllables]);
+
+  // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
   return (
@@ -664,6 +710,12 @@ export default function LyricsEditor() {
             className="px-3 py-1.5 rounded-lg text-xs font-semibold border bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-violet-500 hover:text-white transition-colors"
           >
             📂 Yükle
+          </button>
+          <button
+            onClick={exportPDF}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold border bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-violet-500 hover:text-white transition-colors"
+          >
+            📄 PDF
           </button>
         </div>
       </div>

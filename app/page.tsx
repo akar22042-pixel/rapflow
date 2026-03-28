@@ -9,6 +9,8 @@ import BreathTrainer from "@/components/breath/BreathTrainer";
 import GhostWriter from "@/components/ghostwriter/GhostWriter";
 import BeatMatcher from "@/components/beatmatch/BeatMatcher";
 import CypherMode from "@/components/cypher/CypherMode";
+import BattleMode from "@/components/battle/BattleMode";
+import ThemeCustomizer from "@/components/theme/ThemeCustomizer";
 
 const TABS = [
   { id: "metronome",   emoji: "🥁", label: "Metronom"    },
@@ -17,6 +19,7 @@ const TABS = [
   { id: "ghostwriter", emoji: "👻", label: "Ghost Writer" },
   { id: "beatmatch",   emoji: "🎵", label: "Beat Match"   },
   { id: "cypher",      emoji: "🔄", label: "Cypher"       },
+  { id: "battle",      emoji: "⚔️", label: "Battle"       },
   { id: "breath",      emoji: "💨", label: "Nefes"        },
 ] as const;
 
@@ -49,6 +52,7 @@ export default function Home() {
             <span className="flex items-center rounded-full bg-zinc-800 border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-300 max-w-[160px] truncate">
               {currentStyle}
             </span>
+            <ThemeCustomizer />
           </div>
         </div>
 
@@ -85,6 +89,7 @@ export default function Home() {
         {activeTab === "ghostwriter" && <GhostWriter />}
         {activeTab === "beatmatch"   && <BeatMatcher />}
         {activeTab === "cypher"      && <CypherMode />}
+        {activeTab === "battle"      && <BattleMode />}
         {activeTab === "breath"      && <BreathTrainer />}
       </main>
 
