@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAnthropicClient } from "@/lib/anthropic";
+import { FLOW_PATTERNS_BY_ARTIST } from "@/lib/flowPatterns";
 
 const MODEL = "claude-sonnet-4-20250514";
 
@@ -18,6 +19,9 @@ interface StyleProfile {
   tone: Tone;
   flowStyle: string;
   uniqueTraits: string[];
+  commonStructures?: string[];
+  metaphorTypes?: string[];
+  sentenceLength?: "kısa" | "orta" | "uzun";
 }
 
 interface GhostwriterRequest {
@@ -26,7 +30,11 @@ interface GhostwriterRequest {
   userStyle?: StyleProfile;
   prompt?: string;
   bpm: number;
-  rhymeScheme?: string; // e.g. "AABB", "ABAB"
+  style?: string;
+  rhymeScheme?: string;
+  flowStyle?: string;    // "hızlı" | "yavaş" | "triplet" | "serbest" | "aynı"
+  rapperStyle?: string;  // rapper name for rhythm injection
+  rhythmPattern?: string; // e.g. "[3-2-3]"
 }
 
 interface AnalyzeResponse {
@@ -38,6 +46,9 @@ interface AnalyzeResponse {
   tone: Tone;
   flowStyle: string;
   uniqueTraits: string[];
+  commonStructures: string[];
+  metaphorTypes: string[];
+  sentenceLength: "kısa" | "orta" | "uzun";
 }
 
 interface GenerateResponse {
@@ -45,11 +56,13 @@ interface GenerateResponse {
   syllableCounts: number[];
   rhymesWith: string;
   styleNotes: string;
+  flowUsed?: string;
 }
 
 interface ContinueResponse {
   lines: string[];
   section: "verse" | "hook" | "bridge";
+  narrativeNote: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,14 +76,56 @@ Her zaman yalnızca geçerli JSON döndür — markdown bloğu, yorum veya JSON 
 
 // ---------------------------------------------------------------------------
 // Target syllables per line derived from BPM
-// 1 bar at given BPM ≈ (BPM / 60) beats/sec; typical rap line = 1–2 bars
-// A comfortable syllables-per-line target at 100 BPM ~ 8–12
 // ---------------------------------------------------------------------------
 function targetSyllables(bpm: number): { min: number; max: number; ideal: number } {
-  const beatsPerBar  = 4;
-  const barsPerLine  = 1;
-  const syl          = Math.round((bpm / 60) * beatsPerBar * barsPerLine * 0.9);
+  const syl = Math.round((bpm / 60) * 4 * 1 * 0.9);
   return { min: syl - 2, max: syl + 3, ideal: syl };
+}
+
+// ---------------------------------------------------------------------------
+// Flow style instructions injected into generate prompt
+// ---------------------------------------------------------------------------
+function flowStyleInstruction(flowStyle: string | undefined, ts: ReturnType<typeof targetSyllables>): string {
+  switch (flowStyle) {
+    case "hızlı":
+      return `FLOW STİLİ: Hızlı akış. Her satırda ${ts.ideal + 2}–${ts.max + 3} hece hedefle. ` +
+        `Kısa keskin kelimeler, üst üste binen kelime grupları, nefes almadan akan satırlar.`;
+    case "yavaş":
+      return `FLOW STİLİ: Yavaş dramatik akış. Her satırda ${Math.max(4, ts.min - 2)}–${ts.ideal} hece hedefle. ` +
+        `Kelimeler arası dramatik duraklar, güçlü vurgulu sonlar, her hece ağırlıklı söylenir.`;
+    case "triplet":
+      return `FLOW STİLİ: Triplet (üçlü) akış. Satırları 3'lü hece gruplarına böl: [3-3-3] veya [3-2-3] gibi. ` +
+        `Her üçlükte bir vurgulu hece. Senkoplu, sallanan bir ritim hissi yarat. ` +
+        `Heceleme: bir-iki-ÜÇ / bir-iki-ÜÇ kalıbı.`;
+    case "serbest":
+      return `FLOW STİLİ: Serbest akış. Hece sayısı kısıtı yok — iç ritim ve doğal konuşma temposunu takip et. ` +
+        `Kafiye ve anlam öncelikli, metrik kısıtlama ikincil.`;
+    default:
+      return `FLOW STİLİ: Dengeli akış. ${ts.min}–${ts.max} hece/satır, sanatçının doğal temposu.`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rapper rhythm injection from flowPatterns
+// ---------------------------------------------------------------------------
+function rapperRhythmInstruction(rapperStyle: string | undefined): string {
+  if (!rapperStyle) return "";
+  const patterns = FLOW_PATTERNS_BY_ARTIST[rapperStyle];
+  if (!patterns?.length) return "";
+  const p = patterns[0];
+  return `\nRAPPER AKIŞ TARZI — ${rapperStyle} (${p.song}):\n` +
+    `Ritim hissi: "${p.rhythmDescription}"\n` +
+    `Onomatope: ${p.onomatopoeia}\n` +
+    `Bu sanatçının ritim kalıbını taklit et. Aynı vurgu ve senkop yerleşimini hedefle.\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Rhythm pattern instruction
+// ---------------------------------------------------------------------------
+function rhythmPatternInstruction(rhythmPattern: string | undefined): string {
+  if (!rhythmPattern) return "";
+  return `\nRİTİM KALIBI: Satırları ${rhythmPattern} hece grubuna böl. ` +
+    `Her grup kendi içinde bir ritim birimi oluşturmalı.\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +134,7 @@ function targetSyllables(bpm: number): { min: number; max: number; ideal: number
 
 function analyzePrompt(lyrics: string, bpm: number): string {
   const ts = targetSyllables(bpm);
-  return `Aşağıdaki Türkçe rap sözlerini analiz et ve bu sanatçının stil profilini çıkar.
+  return `Aşağıdaki Türkçe rap sözlerini analiz et ve bu sanatçının kapsamlı stil profilini çıkar.
 BPM: ${bpm} (ideal hece sayısı/satır: ~${ts.ideal}, aralık: ${ts.min}–${ts.max})
 
 Sözler:
@@ -96,6 +151,9 @@ Analiz kriterleri:
 - tone: baskın ton — "agresif", "melankolik", "motivasyon", "sokak", veya "edebi"
 - flowStyle: flow stilinin kısa açıklaması (Türkçe, 1-2 cümle)
 - uniqueTraits: bu sanatçıya özgü eşsiz özellikler (en az 3 madde)
+- commonStructures: en sık tekrarlanan cümle yapı kalıpları (en az 3 örnek, örn: "X var Y yok", "Ben X sen Y", "özne+eylem+nesne", "soru-cevap yapısı")
+- metaphorTypes: kullanılan metafor ve somut imge türleri (en az 3, örn: "şehir=savaş alanı", "doğa metaforları", "şehir imgeleri")
+- sentenceLength: baskın cümle uzunluğu — "kısa" (1-6 hece), "orta" (7-10 hece), "uzun" (11+ hece)
 
 Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
 {
@@ -106,7 +164,10 @@ Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
   "favoriteWords": ["kelime1", ...],
   "tone": "<agresif|melankolik|motivasyon|sokak|edebi>",
   "flowStyle": "<Türkçe açıklama>",
-  "uniqueTraits": ["özellik1", "özellik2", ...]
+  "uniqueTraits": ["özellik1", "özellik2", ...],
+  "commonStructures": ["yapı1", "yapı2", ...],
+  "metaphorTypes": ["metafor1", "metafor2", ...],
+  "sentenceLength": "<kısa|orta|uzun>"
 }`;
 }
 
@@ -115,9 +176,16 @@ function generatePrompt(
   prompt: string,
   bpm: number,
   rhymeScheme: string,
+  flowStyle: string | undefined,
+  rapperStyle: string | undefined,
+  rhythmPattern: string | undefined,
 ): string {
   const ts = targetSyllables(bpm);
   const isSokak = userStyle.tone === "sokak";
+  const flowInstr = flowStyleInstruction(flowStyle, ts);
+  const rapperInstr = rapperRhythmInstruction(rapperStyle);
+  const rhythmInstr = rhythmPatternInstruction(rhythmPattern);
+
   return `Sen bu sanatçının ghostwriter'ısın. Sanatçının tarzını mükemmel şekilde taklit etmelisin.
 
 SANATÇI STİL PROFİLİ:
@@ -128,27 +196,36 @@ SANATÇI STİL PROFİLİ:
 - Kafiye Düzeni: ${userStyle.rhymePattern}
 - Flow Stili: ${userStyle.flowStyle}
 - Eşsiz Özellikler: ${userStyle.uniqueTraits.join("; ")}
+${userStyle.commonStructures?.length ? `- Cümle Yapıları: ${userStyle.commonStructures.join("; ")}` : ""}
+${userStyle.metaphorTypes?.length ? `- Metafor Türleri: ${userStyle.metaphorTypes.join("; ")}` : ""}
+${userStyle.sentenceLength ? `- Cümle Uzunluğu: ${userStyle.sentenceLength}` : ""}
 
 GÖREV PARAMETRELERİ:
-- BPM: ${bpm} → satır başına hedef hece: ${ts.ideal} (aralık: ${ts.min}–${ts.max})
-- Devam ettirilen kafiye şeması: ${rhymeScheme || userStyle.rhymePattern}
+- BPM: ${bpm}
+- Kafiye şeması: ${rhymeScheme || userStyle.rhymePattern}
 - Konu/Prompt: "${prompt}"
-${isSokak ? "- DİKKAT: Sokak tonu — gündelik Türkçe argosunu, sokak dilini ve argo kelimeleri kullan" : ""}
+${isSokak ? "- DİKKAT: Sokak tonu — gündelik Türkçe argosunu, sokak dilini kullan\n" : ""}
+${flowInstr}
+${rapperInstr}${rhythmInstr}
 
-YAZIM KURALLARI:
+YAZIM KURALLARI — BUNLARA KESİNLİKLE UY:
 1. Tam olarak 2-4 satır yaz
-2. Her satır ${ts.min}–${ts.max} hece arasında olmalı (ideal: ${ts.ideal})
-3. Kafiye şemasına uy: ${rhymeScheme || userStyle.rhymePattern}
-4. Sanatçının sevdiği kelimeleri doğal olarak entegre et
-5. Sanatçının sesini ve tonunu koru — SESSİZ TAKLİT ET, özgün hisset
-6. Türkçe yaz, hiçbir İngilizce kelime kullanma
+2. Her satır kendi başına anlamlı ve tamamlanmış bir düşünce olmalı
+3. Kelimeler arasında mantıksal ve duygusal bağ kurulmalı — anlamsız dizme yasak
+4. KLİŞELERDEN KAÇIN: "sokaklar ağlıyor", "kalbim yandı", "hayat zor", "gözlerim yaşlı", "yolum uzun" gibi ifadeler kullanma
+5. Türkçe günlük konuşma diline yakın, doğal ses — yapay veya edebi değil
+6. Her satırda güçlü bir somut imge veya spesifik bir detay olsun (soyut genel laflardan kaçın)
+7. Kafiye şemasına uy: ${rhymeScheme || userStyle.rhymePattern}
+8. Sanatçının sesini ve tonunu koru
+9. Türkçe yaz, hiçbir İngilizce kelime kullanma
 
 Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
 {
   "lines": ["satır1", "satır2", ...],
   "syllableCounts": [<satır1 hece sayısı>, <satır2 hece sayısı>, ...],
   "rhymesWith": "<yeni satırların kafiye kurduğu kelime/ek>",
-  "styleNotes": "<bu satırların sanatçı stiline nasıl uyduğuna dair kısa Türkçe not>"
+  "styleNotes": "<bu satırların sanatçı stiline nasıl uyduğuna dair kısa Türkçe not>",
+  "flowUsed": "<kullanılan flow stilinin kısa adı>"
 }`;
 }
 
@@ -159,8 +236,10 @@ function continuePrompt(
 ): string {
   const ts = targetSyllables(bpm);
   const isSokak = userStyle.tone === "sokak";
-  const lineCount = lyrics.trim().split("\n").filter(Boolean).length;
-  // Guess which section comes next based on verse length
+  const allLines = lyrics.trim().split("\n").filter(Boolean);
+  // Use last 6 lines for context, track total count for section detection
+  const contextLines = allLines.slice(-6).join("\n");
+  const lineCount = allLines.length;
   const nextSection =
     lineCount < 4 ? "verse" : lineCount < 8 ? "hook" : lineCount < 12 ? "verse" : "bridge";
 
@@ -172,12 +251,15 @@ SANATÇI STİL PROFİLİ:
 - Sevdiği Kelimeler: ${userStyle.favoriteWords.join(", ")}
 - Flow Stili: ${userStyle.flowStyle}
 - Eşsiz Özellikler: ${userStyle.uniqueTraits.join("; ")}
+${userStyle.commonStructures?.length ? `- Cümle Yapıları: ${userStyle.commonStructures.join("; ")}` : ""}
+${userStyle.metaphorTypes?.length ? `- Metafor Türleri: ${userStyle.metaphorTypes.join("; ")}` : ""}
 ${isSokak ? "- Sokak tonu: argo ve gündelik dil kullan" : ""}
 
-MEVCUT SÖZLER:
+SON 6 SATIR (BAĞLAM):
 """
-${lyrics}
+${contextLines}
 """
+(Toplam ${lineCount} satır yazıldı)
 
 GÖREV PARAMETRELERİ:
 - BPM: ${bpm} → satır başına hedef hece: ${ts.ideal} (aralık: ${ts.min}–${ts.max})
@@ -187,21 +269,24 @@ GÖREV PARAMETRELERİ:
     "Verse için 4-6 satır yaz, hikayeyi ilerlet"}
 
 YAZIM KURALLARI:
-1. Mevcut temayı ve anlatıyı organik olarak sürdür
+1. Anlatının duygusal ve tematik akışını koru, hikayeyi ilerlet — mevcut temayı ve son satırın duygusunu organik olarak sürdür, kopukluk yok
 2. Her satır ${ts.min}–${ts.max} hece arasında olmalı
 3. Son satırın kafiye şemasını devam ettir
 4. Sanatçının sesini koru — sanki aynı kişi yazmış gibi hissettir
-5. Türkçe yaz, hiçbir İngilizce kelime kullanma
+5. KLİŞEDEN KAÇIN: "sokaklar ağlıyor", "kalbim yandı" gibi ifadeler kullanma
+6. Her satırda somut bir imge veya spesifik detay olsun
+7. Türkçe yaz, hiçbir İngilizce kelime kullanma
 
 Yalnızca şu JSON yapısını döndür (başka hiçbir şey yazma):
 {
   "lines": ["satır1", "satır2", ...],
-  "section": "${nextSection}"
+  "section": "${nextSection}",
+  "narrativeNote": "<devam ettirilen hikaye ipliğini 1 cümleyle açıkla>"
 }`;
 }
 
 // ---------------------------------------------------------------------------
-// JSON parse helper (strips accidental markdown fences)
+// JSON parse helper
 // ---------------------------------------------------------------------------
 function parseJSON<T>(raw: string): T {
   try {
@@ -227,9 +312,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { mode, lyrics, userStyle, prompt, bpm, rhymeScheme } = body;
+  const { mode, lyrics, userStyle, prompt, bpm, rhymeScheme, flowStyle, rapperStyle, rhythmPattern } = body;
 
-  // Validation
   if (!mode || !["analyze", "generate", "continue"].includes(mode)) {
     return NextResponse.json(
       { error: 'mode must be "analyze", "generate", or "continue"' },
@@ -243,33 +327,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
   if (mode === "analyze" && !lyrics?.trim()) {
-    return NextResponse.json(
-      { error: "lyrics is required for analyze mode" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "lyrics is required for analyze mode" }, { status: 400 });
   }
   if (mode === "generate" && (!userStyle || !prompt?.trim())) {
-    return NextResponse.json(
-      { error: "userStyle and prompt are required for generate mode" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "userStyle and prompt are required for generate mode" }, { status: 400 });
   }
   if (mode === "continue" && (!lyrics?.trim() || !userStyle)) {
-    return NextResponse.json(
-      { error: "lyrics and userStyle are required for continue mode" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "lyrics and userStyle are required for continue mode" }, { status: 400 });
   }
 
-  // Build prompt
   const userPrompt =
     mode === "analyze"
       ? analyzePrompt(lyrics!, bpm)
       : mode === "generate"
-      ? generatePrompt(userStyle!, prompt!, bpm, rhymeScheme ?? "AABB")
+      ? generatePrompt(userStyle!, prompt!, bpm, rhymeScheme ?? "AABB", flowStyle, rapperStyle, rhythmPattern)
       : continuePrompt(lyrics!, userStyle!, bpm);
 
-  const maxTokens = mode === "analyze" ? 800 : mode === "generate" ? 512 : 640;
+  const maxTokens = mode === "analyze" ? 900 : mode === "generate" ? 600 : 700;
 
   try {
     const message = await getAnthropicClient().messages.create({
@@ -285,13 +359,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     try {
       parsed = parseJSON(raw);
     } catch {
-      return NextResponse.json(
-        { error: "Model returned non-JSON response", raw },
-        { status: 502 }
-      );
+      return NextResponse.json({ error: "Model returned non-JSON response", raw }, { status: 502 });
     }
 
-    // Shape validation
     if (mode === "analyze" && !("vocabulary" in parsed)) {
       return NextResponse.json({ error: "Unexpected response shape", raw }, { status: 502 });
     }

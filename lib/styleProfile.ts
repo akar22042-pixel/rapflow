@@ -15,6 +15,9 @@ export interface StyleProfile {
   uniqueTraits: string[];
   analyzedAt: string;        // ISO date string
   lyricsCount: number;       // number of lines analyzed
+  commonStructures?: string[];   // common sentence construction patterns
+  metaphorTypes?: string[];      // image/metaphor types used
+  sentenceLength?: "kısa" | "orta" | "uzun"; // dominant sentence length
 }
 
 const LS_KEY = "rapflow_style_profile";
