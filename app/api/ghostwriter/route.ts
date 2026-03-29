@@ -25,6 +25,15 @@ interface StyleProfile {
   sentenceLength?: "kısa" | "orta" | "uzun";
 }
 
+interface ReferenceFlow {
+  artist: string;
+  title: string;
+  flowDescription: string;
+  flowPattern: string;
+  syllablePattern: number[];
+  keyTechniques: string[];
+}
+
 interface GhostwriterRequest {
   mode: "analyze" | "generate" | "continue";
   lyrics?: string;
@@ -37,6 +46,7 @@ interface GhostwriterRequest {
   rapperStyle?: string;   // rapper name for rhythm injection
   rhythmPattern?: string; // e.g. "[3-2-3]"
   characterDNA?: CharacterDNA;
+  referenceFlow?: ReferenceFlow;
 }
 
 interface AnalyzeResponse {
@@ -225,6 +235,7 @@ function generatePrompt(
   rapperStyle: string | undefined,
   rhythmPattern: string | undefined,
   characterDNA?: CharacterDNA,
+  referenceFlow?: ReferenceFlow,
 ): string {
   const ts = targetSyllables(bpm);
   const isSokak = userStyle.tone === "sokak" || characterDNA?.tone === "agresif" || characterDNA?.tone === "öfkeli";
@@ -276,7 +287,17 @@ Konu/Prompt: "${prompt}"
 BPM: ${bpm} → ${sylGuide}
 Kafiye şeması: ${rhymeScheme || userStyle.rhymePattern}
 ${isSokak ? "Ton: sokak/agresif — gündelik Türkçe argosunu, sokak dilini kullan\n" : ""}${flowInstr}
-${rapperInstr}${rhythmInstr}
+${rapperInstr}${rhythmInstr}${referenceFlow ? `
+REFERANS FLOW — ÖNCELİKLİ:
+Bu dörtlüğü ${referenceFlow.artist} - "${referenceFlow.title}" şarkısının flow yapısıyla yaz.
+Ritim kalıbı: ${referenceFlow.flowPattern}
+Hece dağılımı per bar: [${referenceFlow.syllablePattern.join(", ")}]
+Temel teknikler: ${referenceFlow.keyTechniques.join(", ")}
+Bu flow'un karakteristiği: ${referenceFlow.flowDescription}
+
+Önemli: Şarkıdan kelime veya cümle kopyalama. Sadece AKIŞ ve RİTİM yapısını al.
+Kendi karakterin, kendi sözlerin — ama o şarkının ritim DNA'sıyla.
+` : ""}
 ${STRONG_WEAK_EXAMPLES}
 
 REFERANS DÖRTLÜKLER — bu kalitede yaz:
@@ -456,7 +477,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { mode, lyrics, userStyle, prompt, bpm, rhymeScheme, flowStyle, rapperStyle, rhythmPattern, characterDNA } = body;
+  const { mode, lyrics, userStyle, prompt, bpm, rhymeScheme, flowStyle, rapperStyle, rhythmPattern, characterDNA, referenceFlow } = body;
 
   if (!mode || !["analyze", "generate", "continue"].includes(mode)) {
     return NextResponse.json(
@@ -487,7 +508,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     mode === "analyze"
       ? analyzePrompt(lyrics!, bpm)
       : mode === "generate"
-      ? generatePrompt(userStyle!, prompt!, bpm, rhymeScheme ?? "AABB", flowStyle, rapperStyle, rhythmPattern, characterDNA)
+      ? generatePrompt(userStyle!, prompt!, bpm, rhymeScheme ?? "AABB", flowStyle, rapperStyle, rhythmPattern, characterDNA, referenceFlow)
       : continuePrompt(lyrics!, userStyle!, bpm, characterDNA)
   );
 

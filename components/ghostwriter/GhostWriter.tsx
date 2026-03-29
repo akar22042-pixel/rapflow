@@ -16,7 +16,7 @@ import {
   saveCharacterDNA,
 } from "@/lib/characterDNA";
 import CharacterCreator from "./CharacterCreator";
-import BeatStudio from "./BeatStudio";
+import BeatStudio, { SelectedFlow } from "./BeatStudio";
 import SongStructurePlanner, { SectionType } from "./SongStructurePlanner";
 
 // VerseData shape (mirrors API response)
@@ -199,6 +199,7 @@ export default function GhostWriter() {
   const [addedFlash, setAddedFlash]   = useState(false);
   const [likedLines, setLikedLines]   = useState<LikedLine[]>([]);
   const [, setFocusSection] = useState<SectionType>("verse");
+  const [selectedFlow, setSelectedFlow] = useState<SelectedFlow | null>(null);
 
   useEffect(() => {
     setProfile(loadStyleProfile());
@@ -278,6 +279,7 @@ export default function GhostWriter() {
           rapperStyle:   rp ?? undefined,
           rhythmPattern: rhythmPattern !== "[3-2-3]" ? rhythmPattern : undefined,
           characterDNA:  characterDNA ?? undefined,
+          referenceFlow: selectedFlow ?? undefined,
         }),
       });
       const data = await res.json();
@@ -417,7 +419,7 @@ export default function GhostWriter() {
     <div className="flex flex-col gap-5 w-full max-w-2xl mx-auto">
 
       {/* ── Beat Studio ────────────────────────────────────────────────── */}
-      <BeatStudio bpm={currentBPM} onBpmChange={setCurrentBPM} />
+      <BeatStudio bpm={currentBPM} onBpmChange={setCurrentBPM} onFlowSelect={setSelectedFlow} selectedFlow={selectedFlow} />
 
       {/* ── 0. Character DNA ──────────────────────────────────────────────── */}
       {showCharCreator && (
