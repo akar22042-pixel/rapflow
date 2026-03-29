@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAnthropicClient } from "@/lib/anthropic";
 import { FLOW_PATTERNS_BY_ARTIST } from "@/lib/flowPatterns";
 import { CharacterDNA, getCharacterPrompt } from "@/lib/characterDNA";
+import { getLyricTechniquesPrompt, buildWorkshopPrompt } from "@/lib/lyricIntelligence";
 
 const MODEL = "claude-sonnet-4-20250514";
 
@@ -35,8 +36,9 @@ interface ReferenceFlow {
 }
 
 interface GhostwriterRequest {
-  mode: "analyze" | "generate" | "continue";
+  mode: "analyze" | "generate" | "continue" | "workshop";
   lyrics?: string;
+  lines?: string[];       // for workshop mode
   userStyle?: StyleProfile;
   prompt?: string;
   bpm: number;
@@ -47,6 +49,17 @@ interface GhostwriterRequest {
   rhythmPattern?: string; // e.g. "[3-2-3]"
   characterDNA?: CharacterDNA;
   referenceFlow?: ReferenceFlow;
+}
+
+interface WorkshopImprovement {
+  original: string;
+  improved: string;
+  technique: string;
+  explanation: string;
+}
+
+interface WorkshopResponse {
+  improvements: WorkshopImprovement[];
 }
 
 interface AnalyzeResponse {
@@ -279,9 +292,15 @@ KARAKTERİN GÖZÜNDEN BAK:
 - Onun ${characterDNA.struggles.slice(0, 2).join(" ve ")} mücadelesini hisset
 - Soyut değil, YAŞANMIŞ bir an yaz — sanki şu an o anın içindesin` : "";
 
+  // Inject lyric intelligence techniques
+  const lyricTechniques = getLyricTechniquesPrompt(
+    characterDNA?.tone ?? userStyle.tone,
+    characterDNA?.lyricalStyle
+  );
+
   return `${identityBlock}
 ${characterImmersion}
-
+${lyricTechniques}
 GÖREV:
 Konu/Prompt: "${prompt}"
 BPM: ${bpm} → ${sylGuide}
@@ -479,9 +498,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const { mode, lyrics, userStyle, prompt, bpm, rhymeScheme, flowStyle, rapperStyle, rhythmPattern, characterDNA, referenceFlow } = body;
 
-  if (!mode || !["analyze", "generate", "continue"].includes(mode)) {
+  if (!mode || !["analyze", "generate", "continue", "workshop"].includes(mode)) {
     return NextResponse.json(
-      { error: 'mode must be "analyze", "generate", or "continue"' },
+      { error: 'mode must be "analyze", "generate", "continue", or "workshop"' },
       { status: 400 }
     );
   }
@@ -499,6 +518,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
   if (mode === "continue" && (!lyrics?.trim() || !userStyle)) {
     return NextResponse.json({ error: "lyrics and userStyle are required for continue mode" }, { status: 400 });
+  }
+  if (mode === "workshop" && (!body.lines?.length)) {
+    return NextResponse.json({ error: "lines array is required for workshop mode" }, { status: 400 });
+  }
+
+  // Handle workshop mode separately
+  if (mode === "workshop") {
+    try {
+      const workshopPrompt = buildWorkshopPrompt(body.lines!);
+      const message = await getAnthropicClient().messages.create({
+        model: MODEL,
+        max_tokens: 1200,
+        system: SYSTEM,
+        messages: [{ role: "user", content: workshopPrompt }],
+      });
+
+      const raw = message.content.find((b) => b.type === "text")?.text ?? "";
+      let parsed: WorkshopResponse;
+      try {
+        parsed = parseJSON(raw);
+      } catch {
+        return NextResponse.json({ error: "Model returned non-JSON response", raw }, { status: 502 });
+      }
+
+      if (!parsed.improvements?.length) {
+        return NextResponse.json({ error: "Unexpected response shape", raw }, { status: 502 });
+      }
+
+      return NextResponse.json(parsed);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
   }
 
   // Build character prefix (injected at the START of every user prompt)
@@ -524,7 +576,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const raw = message.content.find((b) => b.type === "text")?.text ?? "";
 
-    let parsed: AnalyzeResponse | GenerateResponse | ContinueResponse;
+    let parsed: AnalyzeResponse | GenerateResponse | ContinueResponse | WorkshopResponse;
     try {
       parsed = parseJSON(raw);
     } catch {

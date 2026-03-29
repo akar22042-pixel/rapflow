@@ -17,7 +17,7 @@ import {
 } from "@/lib/characterDNA";
 import CharacterCreator from "./CharacterCreator";
 import BeatStudio, { SelectedFlow } from "./BeatStudio";
-import SongStructurePlanner, { SectionType } from "./SongStructurePlanner";
+import SongStructurePlanner, { SectionType, SongSection, DEFAULT_SECTIONS } from "./SongStructurePlanner";
 
 // VerseData shape (mirrors API response)
 interface VerseData {
@@ -44,7 +44,6 @@ interface LikedLine { line: string; score: number; date: string; style: string; 
 function loadLiked(): LikedLine[] {
   try {
     const raw = JSON.parse(localStorage.getItem(LS_LIKED) ?? "[]");
-    // backward-compat: handle plain string arrays from older saves
     return raw.map((x: unknown) => typeof x === "string"
       ? { line: x, score: 0, date: new Date().toISOString(), style: "" }
       : x as LikedLine
@@ -65,21 +64,15 @@ const CLICHES = [
 ];
 
 function lineQuality(line: string, sylCount: number, targetSyl: number, allLines: string[]): number {
-  // Syllable match: 0–4 pts
   const diff = Math.abs(sylCount - targetSyl);
   const sylScore = Math.max(0, 4 - diff * 0.7);
-
-  // Rhyme quality: 0–3 pts (last 3 chars vs other lines)
   const suffix = line.trim().toLowerCase().slice(-3);
   const rhymeHits = allLines.filter((l) => l !== line && l.trim().toLowerCase().slice(-3) === suffix).length;
   const rhymeScore = Math.min(3, rhymeHits * 1.5);
-
-  // Originality: 0–3 pts
   const hasCliche = CLICHES.some((c) => line.toLowerCase().includes(c));
   const hasConcreteImage = /\d|metre|yıl|sabah|akşam|sokak adı|[0-9]/.test(line) ||
-    line.split(" ").length >= 5; // rough proxy for specificity
+    line.split(" ").length >= 5;
   const origScore = hasCliche ? 0.5 : hasConcreteImage ? 3 : 2;
-
   return Math.min(10, Math.round(sylScore + rhymeScore + origScore));
 }
 
@@ -151,6 +144,11 @@ function Skeleton({ className }: { className?: string }) {
   return <div className={["animate-pulse rounded-lg bg-zinc-700/50", className ?? ""].join(" ")} />;
 }
 
+// Section type label for active badge
+const SECTION_TYPE_LABELS: Record<SectionType, string> = {
+  verse: "Kıta", hook: "Nakarat", bridge: "Köprü", intro: "Intro", outro: "Outro",
+};
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -179,10 +177,8 @@ export default function GhostWriter() {
   const [genError, setGenError]         = useState<string | null>(null);
 
   const [result, setResult] = useState<{
-    // verse mode (generate)
     verse?: VerseData;
     qualityScore?: number;
-    // continue mode (legacy line-by-line)
     lines: string[];
     syllableCounts: number[];
     rhymesWith: string;
@@ -198,8 +194,11 @@ export default function GhostWriter() {
   } | null>(null);
   const [addedFlash, setAddedFlash]   = useState(false);
   const [likedLines, setLikedLines]   = useState<LikedLine[]>([]);
-  const [, setFocusSection] = useState<SectionType>("verse");
   const [selectedFlow, setSelectedFlow] = useState<SelectedFlow | null>(null);
+
+  // Song Structure Planner state — lifted up
+  const [songSections, setSongSections] = useState<SongSection[]>(DEFAULT_SECTIONS);
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
 
   useEffect(() => {
     setProfile(loadStyleProfile());
@@ -209,7 +208,10 @@ export default function GhostWriter() {
 
   const lyricLines = currentLyrics.trim().split("\n").filter(Boolean);
   const canWrite   = profile !== null || lyricLines.length >= 3 || characterDNA !== null;
-  const targetSyl  = targetSyllables * 4; // bars × beats
+  const targetSyl  = targetSyllables * 4;
+
+  // Active section info for display
+  const activeSection = songSections.find((s) => s.id === activeSectionId) ?? null;
 
   // ── Analyze
   const analyze = useCallback(async () => {
@@ -240,7 +242,7 @@ export default function GhostWriter() {
     } finally {
       setAnalyzing(false);
     }
-  }, [currentLyrics, currentBPM, lyricLines.length, setContextProfile]);
+  }, [currentLyrics, currentBPM, lyricLines.length, setContextProfile, characterDNA]);
 
   // ── Generate
   const generate = useCallback(async (
@@ -309,7 +311,7 @@ export default function GhostWriter() {
     } finally {
       setGenerating(false);
     }
-  }, [prompt, section, selectedFlowStyle, selectedRapper, rhythmPattern, profile, currentBPM, targetSyl]);
+  }, [prompt, section, selectedFlowStyle, selectedRapper, rhythmPattern, profile, currentBPM, targetSyl, characterDNA, selectedFlow]);
 
   // ── Continue
   const continueWriting = useCallback(async () => {
@@ -335,7 +337,7 @@ export default function GhostWriter() {
 
       const lines: string[] = data.lines ?? [];
       const syllableCounts  = lines.map(countSyllablesTR);
-      const qualityScores   = lines.map((l, i) =>
+      const qualityScores   = lines.map((l: string, i: number) =>
         lineQuality(l, syllableCounts[i], targetSyl, lines)
       );
 
@@ -353,7 +355,7 @@ export default function GhostWriter() {
     } finally {
       setContinuing(false);
     }
-  }, [currentLyrics, profile, currentBPM, targetSyl]);
+  }, [currentLyrics, profile, currentBPM, targetSyl, characterDNA]);
 
   // ── Add to editor
   const addToEditor = useCallback(() => {
@@ -362,6 +364,22 @@ export default function GhostWriter() {
     setAddedFlash(true);
     setTimeout(() => setAddedFlash(false), 2000);
   }, [result, setPendingLines]);
+
+  // ── Add to active section (Dörtlüğü Ekle)
+  const addToActiveSection = useCallback(() => {
+    if (!result || !activeSectionId) return;
+    setSongSections((prev) =>
+      prev.map((s) =>
+        s.id === activeSectionId
+          ? { ...s, verses: [...s.verses, result.lines] }
+          : s
+      )
+    );
+    // Also add to editor
+    setPendingLines(result.lines);
+    setAddedFlash(true);
+    setTimeout(() => setAddedFlash(false), 2000);
+  }, [result, activeSectionId, setPendingLines]);
 
   // ── Like line
   const toggleLike = useCallback((line: string, score: number) => {
@@ -400,7 +418,7 @@ export default function GhostWriter() {
     } finally {
       setAnalyzing(false);
     }
-  }, [likedLines, currentBPM, setContextProfile]);
+  }, [likedLines, currentBPM, setContextProfile, characterDNA]);
 
   // Highest quality line index
   const bestIdx = result
@@ -416,7 +434,7 @@ export default function GhostWriter() {
   };
 
   return (
-    <div className="flex flex-col gap-5 w-full max-w-2xl mx-auto">
+    <div className="flex flex-col gap-5 w-full max-w-2xl mx-auto animate-fadeIn">
 
       {/* ── Beat Studio ────────────────────────────────────────────────── */}
       <BeatStudio bpm={currentBPM} onBpmChange={setCurrentBPM} onFlowSelect={setSelectedFlow} selectedFlow={selectedFlow} />
@@ -434,11 +452,11 @@ export default function GhostWriter() {
         />
       )}
 
-      <div className="flex flex-col gap-3 p-5 bg-zinc-900 rounded-2xl border border-zinc-700">
+      <div className="flex flex-col gap-3 p-5 rounded-2xl border bg-white/5 backdrop-blur-sm border-white/10 hover:translate-y-[-1px] transition-all">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Karakter DNA</p>
-            <h3 className="text-sm font-bold text-white">🎭 Kim Olduğunu Belirle</h3>
+            <h3 className="text-sm font-bold text-white">Kim Olduğunu Belirle</h3>
           </div>
           {characterDNA && (
             <div className="flex items-center gap-2">
@@ -456,7 +474,6 @@ export default function GhostWriter() {
 
         {characterDNA ? (
           <div className="flex flex-col gap-3">
-            {/* Active banner */}
             <div className="flex items-center gap-3 bg-violet-500/10 border border-violet-500/30 rounded-xl px-4 py-3">
               <span className="text-2xl">🎭</span>
               <div className="min-w-0">
@@ -470,11 +487,11 @@ export default function GhostWriter() {
               <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full border bg-violet-500/15 border-violet-500/30 text-violet-300">
                 {TONE_LABELS[characterDNA.tone] ?? characterDNA.tone}
               </span>
-              <span className="text-[10px] px-2.5 py-1 rounded-full border bg-zinc-800 border-zinc-700 text-zinc-400">
+              <span className="text-[10px] px-2.5 py-1 rounded-full border bg-white/5 border-white/10 text-zinc-400">
                 {characterDNA.lyricalStyle}
               </span>
               {characterDNA.struggles.slice(0, 4).map(s => (
-                <span key={s} className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500">{s}</span>
+                <span key={s} className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-zinc-500">{s}</span>
               ))}
             </div>
             {characterDNA.signatureWords.length > 0 && (
@@ -492,16 +509,16 @@ export default function GhostWriter() {
             </p>
             <button
               onClick={() => setShowCharCreator(true)}
-              className="w-full py-3 rounded-xl bg-violet-600 border border-violet-500 text-white text-sm font-semibold hover:bg-violet-500 transition-colors"
+              className="w-full py-3 rounded-xl text-sm font-semibold transition-all border bg-gradient-to-r from-violet-600 to-purple-700 border-violet-500 text-white hover:scale-[1.01] active:scale-[0.99]"
             >
-              🎭 Karakterini Oluştur
+              Karakterini Oluştur
             </button>
           </div>
         )}
       </div>
 
       {/* ── 1. Style Analysis ────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-4 p-5 bg-zinc-900 rounded-2xl border border-zinc-700">
+      <div className="flex flex-col gap-4 p-5 rounded-2xl border bg-white/5 backdrop-blur-sm border-white/10 hover:translate-y-[-1px] transition-all">
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Stil Analizi</p>
@@ -536,21 +553,21 @@ export default function GhostWriter() {
               <span className={["px-2.5 py-1 rounded-full text-xs font-semibold border", TONE_META[profile.tone]?.color ?? "bg-zinc-700 text-zinc-300 border-zinc-600"].join(" ")}>
                 {TONE_META[profile.tone]?.emoji} {TONE_META[profile.tone]?.label}
               </span>
-              <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-zinc-800 border border-zinc-700 text-zinc-400">
-                ⌀ {Math.round(profile.avgSyllables)} hece/satır
+              <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-white/5 border border-white/10 text-zinc-400">
+                {Math.round(profile.avgSyllables)} hece/satır
               </span>
-              <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-zinc-800 border border-zinc-700 text-zinc-400">
+              <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-white/5 border border-white/10 text-zinc-400">
                 {profile.rhymePattern}
               </span>
               {profile.sentenceLength && (
-                <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-zinc-800 border border-zinc-700 text-zinc-400">
+                <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-white/5 border border-white/10 text-zinc-400">
                   {profile.sentenceLength} cümle
                 </span>
               )}
             </div>
             <div className="flex flex-wrap gap-1">
               {profile.themes.map((t) => (
-                <span key={t} className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-zinc-800 border border-zinc-700 text-zinc-500">{t}</span>
+                <span key={t} className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-white/5 border border-white/10 text-zinc-500">{t}</span>
               ))}
             </div>
             <ul className="flex flex-col gap-0.5">
@@ -579,25 +596,25 @@ export default function GhostWriter() {
           </p>
         )}
 
-        {savedFlash && <p className="text-xs text-emerald-400 font-semibold">✓ Stilin kaydedildi</p>}
+        {savedFlash && <p className="text-xs text-emerald-400 font-semibold animate-fadeIn">Stilin kaydedildi</p>}
         {analyzeError && <p className="text-xs text-red-400">{analyzeError}</p>}
 
         <button
           onClick={analyze}
           disabled={analyzing || !currentLyrics.trim()}
-          className={["w-full py-2.5 rounded-xl text-sm font-semibold transition-colors border",
+          className={["w-full py-2.5 rounded-xl text-sm font-semibold transition-all border",
             analyzing || !currentLyrics.trim()
               ? "bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed"
-              : "bg-violet-600 border-violet-500 text-white hover:bg-violet-500",
+              : "bg-gradient-to-r from-violet-600 to-purple-700 border-violet-500 text-white hover:scale-[1.01] active:scale-[0.99]",
           ].join(" ")}
         >
-          {analyzing ? "Analiz ediliyor…" : profile ? "🔄 Tekrar Analiz Et" : "🔍 Stilimi Analiz Et"}
+          {analyzing ? "Analiz ediliyor..." : profile ? "Tekrar Analiz Et" : "Stilimi Analiz Et"}
         </button>
       </div>
 
       {/* ── 2. Ghost Writer ───────────────────────────────────────────────── */}
-      <div className={["flex flex-col gap-4 p-5 bg-zinc-900 rounded-2xl border transition-opacity",
-        canWrite ? "border-zinc-700 opacity-100" : "border-zinc-800 opacity-60",
+      <div className={["flex flex-col gap-4 p-5 rounded-2xl border transition-all bg-white/5 backdrop-blur-sm",
+        canWrite ? "border-white/10 opacity-100" : "border-white/5 opacity-60",
       ].join(" ")}>
         <div>
           <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Ghost Writer</p>
@@ -605,13 +622,26 @@ export default function GhostWriter() {
           {!canWrite && <p className="text-[10px] text-zinc-600 mt-0.5">Etkinleştirmek için stilini analiz et veya 3+ satır yaz</p>}
         </div>
 
+        {/* Active section badge */}
+        {activeSection && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/15 border border-violet-500/30 animate-fadeIn">
+            <span className="text-sm">✍️</span>
+            <span className="text-xs font-semibold text-violet-300">
+              [{SECTION_TYPE_LABELS[activeSection.type]}] için yazıyorsun
+            </span>
+            <span className="text-[10px] text-violet-400/70 font-mono ml-auto">
+              {activeSection.verses.reduce((a, v) => a + v.length, 0)}/{activeSection.plannedBars} bar
+            </span>
+          </div>
+        )}
+
         {/* Prompt */}
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="Ne hakkında yazmak istiyorsun? örn: sokakta büyümek, kayıp, başarı..."
           rows={2}
-          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none resize-none focus:border-violet-500 transition-colors"
+          className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none resize-none focus:border-violet-500 transition-colors"
         />
 
         {/* Section + Rhythm pattern row */}
@@ -621,7 +651,7 @@ export default function GhostWriter() {
             <select
               value={section}
               onChange={(e) => setSection(e.target.value as SectionValue)}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-violet-500 transition-colors"
+              className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-violet-500 transition-colors"
             >
               {SECTIONS.map((s) => (
                 <option key={s.value} value={s.value}>{s.label}</option>
@@ -633,7 +663,7 @@ export default function GhostWriter() {
             <select
               value={rhythmPattern}
               onChange={(e) => setRhythmPattern(e.target.value)}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300 font-mono outline-none focus:border-violet-500 transition-colors"
+              className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-zinc-300 font-mono outline-none focus:border-violet-500 transition-colors"
             >
               {RHYTHM_PATTERNS.map((r) => (
                 <option key={r.value} value={r.value}>{r.value} · {r.desc}</option>
@@ -650,10 +680,10 @@ export default function GhostWriter() {
               <button
                 key={r}
                 onClick={() => setSelectedRapper((prev) => prev === r ? null : r)}
-                className={["px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors",
+                className={["px-2.5 py-1 rounded-full text-xs font-semibold border transition-all",
                   selectedRapper === r
-                    ? "bg-violet-600 border-violet-500 text-white"
-                    : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-violet-500 hover:text-white",
+                    ? "bg-gradient-to-r from-violet-600 to-purple-700 border-violet-500 text-white"
+                    : "bg-white/5 border-white/10 text-zinc-400 hover:border-violet-500 hover:text-white",
                 ].join(" ")}
               >
                 {r}
@@ -667,30 +697,30 @@ export default function GhostWriter() {
           <button
             onClick={() => generate()}
             disabled={generating || !prompt.trim()}
-            className={["flex-1 py-2 rounded-xl text-sm font-semibold transition-colors border",
+            className={["flex-1 py-2 rounded-xl text-sm font-semibold transition-all border",
               generating || !prompt.trim()
                 ? "bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed"
-                : "bg-violet-600 border-violet-500 text-white hover:bg-violet-500",
+                : "bg-gradient-to-r from-violet-600 to-purple-700 border-violet-500 text-white hover:scale-[1.01] active:scale-[0.99]",
             ].join(" ")}
           >
-            {generating ? "Yazıyor…" : "✍️ Yaz"}
+            {generating ? "Yazıyor..." : "Yaz"}
           </button>
           <button
             onClick={continueWriting}
             disabled={continuing || !currentLyrics.trim()}
-            className={["flex-1 py-2 rounded-xl text-sm font-semibold transition-colors border",
+            className={["flex-1 py-2 rounded-xl text-sm font-semibold transition-all border",
               continuing || !currentLyrics.trim()
                 ? "bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed"
-                : "bg-zinc-800 border-zinc-600 text-zinc-200 hover:border-violet-500 hover:text-white",
+                : "bg-white/5 border-white/10 text-zinc-200 hover:border-violet-500 hover:text-white",
             ].join(" ")}
           >
-            {continuing ? "Devam yazıyor…" : "📝 Devam Et"}
+            {continuing ? "Devam yazıyor..." : "Devam Et"}
           </button>
         </div>
 
         {/* Loading skeleton */}
         {(generating || continuing) && (
-          <div className="flex flex-col gap-2 pt-1">
+          <div className="flex flex-col gap-2 pt-1 animate-pulse">
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-5/6" />
             <Skeleton className="h-8 w-4/5" />
@@ -699,11 +729,11 @@ export default function GhostWriter() {
 
         {/* Results */}
         {result && !generating && !continuing && (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 animate-slideUp">
 
             {/* Verse Card (generate mode) */}
             {result.verse ? (
-              <div className="flex flex-col gap-3 bg-zinc-800/40 border border-violet-500/20 rounded-2xl p-4">
+              <div className="flex flex-col gap-3 bg-white/5 backdrop-blur-sm border-l-2 border-t border-r border-b border-violet-500/40 border-t-white/10 border-r-white/10 border-b-white/10 rounded-2xl p-4">
                 {/* Header */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -711,7 +741,7 @@ export default function GhostWriter() {
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/20 border border-violet-500/30 text-violet-300 font-mono">
                       {result.verse.verseType === "hook" ? "Nakarat" : result.verse.verseType === "bridge" ? "Köprü" : "Kıta"}
                     </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-700 border border-zinc-600 text-zinc-400 font-mono">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-zinc-400 font-mono">
                       {result.verse.rhymeScheme}
                     </span>
                   </div>
@@ -728,7 +758,7 @@ export default function GhostWriter() {
 
                 {/* Lines with rhyme scheme */}
                 {(() => {
-                  const scheme = result.verse.rhymeScheme; // "AABB" | "ABAB" | "ABBA" | "AAAA"
+                  const scheme = result.verse.rhymeScheme;
                   const schemeColors: Record<string, string> = {
                     A: "text-violet-400 bg-violet-500/10 border-violet-500/30",
                     B: "text-amber-400 bg-amber-500/10 border-amber-500/30",
@@ -740,36 +770,31 @@ export default function GhostWriter() {
                         const syl = result.syllableCounts[i] ?? countSyllablesTR(line);
                         const score = result.qualityScores[i] ?? 0;
                         const isLiked = likedLines.some((l) => l.line === line);
-                        // Check if this line has a double rhyme highlight
                         const dbl = result.verse!.doubleRhymes.find((d) => d.lines.includes(i as 0 | 1 | 2 | 3));
                         return (
                           <div key={i} className="flex items-start gap-2">
-                            {/* Rhyme letter badge */}
-                            <span className={["text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded border flex-shrink-0 mt-0.5", schemeColors[letter] ?? schemeColors.A].join(" ")}>
+                            <span className={["text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border flex-shrink-0 mt-0.5", schemeColors[letter] ?? schemeColors.A].join(" ")}>
                               {letter}
                             </span>
-                            {/* Line */}
                             <div className="flex-1 min-w-0">
                               <p className="text-sm text-zinc-100 font-mono leading-snug break-words">{line}</p>
                               {dbl && (
-                                <span className="text-[9px] text-violet-400 font-mono">↩ {dbl.rhymingSyllables}</span>
+                                <span className="text-[9px] text-violet-400 font-mono">{dbl.rhymingSyllables}</span>
                               )}
                             </div>
-                            {/* Syllable badge */}
                             <span className={["text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono flex-shrink-0", sylColor(syl, targetSyl)].join(" ")}>
                               {syl}h
                             </span>
-                            {/* Actions */}
                             <div className="flex flex-col gap-0.5 flex-shrink-0">
                               <button
                                 onClick={() => setPendingLines([line])}
                                 className="text-[10px] text-zinc-600 hover:text-emerald-400 transition-colors"
                                 title="Bu satırı ekle"
-                              >➕</button>
+                              >+</button>
                               <button
                                 onClick={() => toggleLike(line, score)}
                                 className={["text-xs transition-colors", isLiked ? "text-red-400" : "text-zinc-600 hover:text-red-400"].join(" ")}
-                              >{isLiked ? "❤️" : "🤍"}</button>
+                              >{isLiked ? "♥" : "♡"}</button>
                             </div>
                           </div>
                         );
@@ -786,12 +811,10 @@ export default function GhostWriter() {
                   </div>
                 )}
 
-                {/* Style notes */}
                 {result.styleNotes && (
                   <p className="text-[11px] text-zinc-500 italic px-1">{result.styleNotes}</p>
                 )}
 
-                {/* Flow pattern */}
                 {result.flowUsed && (
                   <p className="text-[11px] text-zinc-600 px-1 font-mono">flow: {result.flowUsed}</p>
                 )}
@@ -810,14 +833,14 @@ export default function GhostWriter() {
                       className={["flex items-start gap-2 border rounded-xl px-3 py-2.5 transition-all",
                         isBest
                           ? "bg-violet-950/30 border-violet-500/40 ring-1 ring-violet-500/30"
-                          : "bg-zinc-800/60 border-zinc-700/60",
+                          : "bg-white/5 border-white/10",
                       ].join(" ")}
                     >
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-zinc-100 font-mono leading-snug break-words">{line}</p>
                         {isBest && (
                           <span className="text-[9px] text-violet-400 font-semibold uppercase tracking-widest mt-0.5 block">
-                            ✦ en güçlü satır
+                            en güçlü satır
                           </span>
                         )}
                       </div>
@@ -832,12 +855,12 @@ export default function GhostWriter() {
                           onClick={() => setPendingLines([line])}
                           className="text-[10px] text-zinc-600 hover:text-emerald-400 transition-colors font-mono"
                           title="Bu satırı editöre ekle"
-                        >➕</button>
+                        >+</button>
                         <button
                           onClick={() => toggleLike(line, score)}
                           className={["text-sm transition-colors", isLiked ? "text-red-400" : "text-zinc-600 hover:text-red-400"].join(" ")}
                           title={isLiked ? "Beğenildi" : "Bu satırı beğen"}
-                        >{isLiked ? "❤️" : "🤍"}</button>
+                        >{isLiked ? "♥" : "♡"}</button>
                       </div>
                     </div>
                   );
@@ -852,18 +875,18 @@ export default function GhostWriter() {
                 <p className="text-xs text-blue-300 italic leading-relaxed">{result.narrativeNote}</p>
               </div>
             )}
-            {result.styleNotes && !result.narrativeNote && (
+            {result.styleNotes && !result.narrativeNote && !result.verse && (
               <p className="text-[11px] text-zinc-500 italic px-1">{result.styleNotes}</p>
             )}
-            {result.rhymesWith && (
-              <p className="text-[11px] text-violet-400 px-1">↩ "{result.rhymesWith}" ile kafiyeli</p>
+            {result.rhymesWith && !result.verse && (
+              <p className="text-[11px] text-violet-400 px-1">"{result.rhymesWith}" ile kafiyeli</p>
             )}
-            {result.flowUsed && (
+            {result.flowUsed && !result.verse && (
               <p className="text-[11px] text-zinc-500 px-1 font-mono">flow: {result.flowUsed}</p>
             )}
 
             {/* Flow değiştir? */}
-            <div className="flex flex-col gap-2 pt-1 border-t border-zinc-800">
+            <div className="flex flex-col gap-2 pt-1 border-t border-white/10">
               <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Flow değiştir?</p>
               <div className="flex flex-wrap gap-1.5">
                 {FLOW_STYLES.map((fs) => (
@@ -873,10 +896,10 @@ export default function GhostWriter() {
                       setSelectedFlowStyle(fs.id);
                       if (lastGenParams) generate(lastGenParams.prompt, lastGenParams.section, fs.id, lastGenParams.rapper);
                     }}
-                    className={["px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors",
+                    className={["px-2.5 py-1 rounded-full text-xs font-semibold border transition-all",
                       selectedFlowStyle === fs.id
-                        ? "bg-violet-600 border-violet-500 text-white"
-                        : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-violet-500 hover:text-white",
+                        ? "bg-gradient-to-r from-violet-600 to-purple-700 border-violet-500 text-white"
+                        : "bg-white/5 border-white/10 text-zinc-400 hover:border-violet-500 hover:text-white",
                     ].join(" ")}
                   >
                     {fs.label}
@@ -887,23 +910,36 @@ export default function GhostWriter() {
 
             {/* Action buttons */}
             <div className="flex gap-2">
-              <button
-                onClick={addToEditor}
-                className={["flex-1 py-2 rounded-xl text-sm font-semibold transition-colors border",
-                  addedFlash
-                    ? "bg-emerald-600 border-emerald-500 text-white"
-                    : "bg-zinc-800 border-zinc-600 text-zinc-200 hover:border-emerald-500 hover:text-white",
-                ].join(" ")}
-              >
-                {addedFlash ? "✓ Eklendi" : "➕ Tümünü Ekle"}
-              </button>
+              {activeSectionId ? (
+                <button
+                  onClick={addToActiveSection}
+                  className={["flex-1 py-2 rounded-xl text-sm font-semibold transition-all border",
+                    addedFlash
+                      ? "bg-emerald-600 border-emerald-500 text-white"
+                      : "bg-gradient-to-r from-violet-600 to-purple-700 border-violet-500 text-white hover:scale-[1.01] active:scale-[0.99]",
+                  ].join(" ")}
+                >
+                  {addedFlash ? "Eklendi!" : `Dörtlüğü Ekle → ${activeSection?.label ?? "Bölüm"}`}
+                </button>
+              ) : (
+                <button
+                  onClick={addToEditor}
+                  className={["flex-1 py-2 rounded-xl text-sm font-semibold transition-all border",
+                    addedFlash
+                      ? "bg-emerald-600 border-emerald-500 text-white"
+                      : "bg-white/5 border-white/10 text-zinc-200 hover:border-emerald-500 hover:text-white",
+                  ].join(" ")}
+                >
+                  {addedFlash ? "Eklendi!" : "Tümünü Ekle"}
+                </button>
+              )}
               {lastGenParams && (
                 <button
                   onClick={() => generate(lastGenParams.prompt, lastGenParams.section, lastGenParams.flowStyle, lastGenParams.rapper)}
                   disabled={generating}
-                  className="flex-1 py-2 rounded-xl text-sm font-semibold bg-zinc-800 border border-zinc-700 text-zinc-400 hover:border-violet-500 hover:text-white transition-colors"
+                  className="flex-1 py-2 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-zinc-400 hover:border-violet-500 hover:text-white transition-all"
                 >
-                  🔄 Tekrar Üret
+                  Tekrar Üret
                 </button>
               )}
             </div>
@@ -915,9 +951,9 @@ export default function GhostWriter() {
 
       {/* ── 3. Liked Lines ────────────────────────────────────────────────── */}
       {likedLines.length > 0 && (
-        <div className="flex flex-col gap-3 p-5 bg-zinc-900 rounded-2xl border border-zinc-700">
+        <div className="flex flex-col gap-3 p-5 rounded-2xl border bg-white/5 backdrop-blur-sm border-white/10">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Beğenilen Satırlar ❤️</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Beğenilen Satırlar</p>
             <button
               onClick={() => { setLikedLines([]); saveLiked([]); }}
               className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors"
@@ -927,12 +963,12 @@ export default function GhostWriter() {
           </div>
           <div className="flex flex-col gap-1.5">
             {likedLines.slice(0, 8).map((item) => (
-              <div key={item.line} className="flex items-center gap-2 bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-3 py-2">
+              <div key={item.line} className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
                 <p className="flex-1 text-xs text-zinc-300 font-mono leading-snug">{item.line}</p>
                 <span className={["text-[9px] font-mono px-1 py-0.5 rounded border flex-shrink-0", qualityColor(item.score)].join(" ")}>
                   {item.score}/10
                 </span>
-                <button onClick={() => toggleLike(item.line, item.score)} className="text-red-400 text-xs flex-shrink-0">❤️</button>
+                <button onClick={() => toggleLike(item.line, item.score)} className="text-red-400 text-xs flex-shrink-0">♥</button>
               </div>
             ))}
           </div>
@@ -940,9 +976,9 @@ export default function GhostWriter() {
             <button
               onClick={analyzeFromLiked}
               disabled={analyzing}
-              className="w-full py-2 rounded-xl text-xs font-semibold bg-zinc-800 border border-zinc-700 text-zinc-300 hover:border-violet-500 hover:text-white transition-colors disabled:opacity-40"
+              className="w-full py-2 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-zinc-300 hover:border-violet-500 hover:text-white transition-all disabled:opacity-40"
             >
-              {analyzing ? "Analiz ediliyor…" : "🧠 Beğenilen sözlerden stil öğren"}
+              {analyzing ? "Analiz ediliyor..." : "Beğenilen sözlerden stil öğren"}
             </button>
           )}
         </div>
@@ -950,7 +986,7 @@ export default function GhostWriter() {
 
       {/* ── 4. Style Insights ─────────────────────────────────────────────── */}
       {profile && (
-        <div className="flex flex-col gap-4 p-5 bg-zinc-900 rounded-2xl border border-zinc-700">
+        <div className="flex flex-col gap-4 p-5 rounded-2xl border bg-white/5 backdrop-blur-sm border-white/10">
           <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Stil İçgörüleri</p>
 
           <div className="flex flex-col gap-1.5">
@@ -963,21 +999,21 @@ export default function GhostWriter() {
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            <div className="flex flex-col items-center gap-0.5 bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+            <div className="flex flex-col items-center gap-0.5 bg-white/5 border border-white/10 rounded-xl p-3">
               <span className="text-lg">{TONE_META[profile.tone]?.emoji}</span>
               <span className="text-[10px] text-zinc-500 uppercase tracking-wide">{TONE_META[profile.tone]?.label}</span>
             </div>
-            <div className="flex flex-col items-center gap-0.5 bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+            <div className="flex flex-col items-center gap-0.5 bg-white/5 border border-white/10 rounded-xl p-3">
               <span className="text-sm font-bold text-violet-300 font-mono">{profile.rhymePattern}</span>
               <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Kafiye</span>
             </div>
-            <div className="flex flex-col items-center gap-0.5 bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+            <div className="flex flex-col items-center gap-0.5 bg-white/5 border border-white/10 rounded-xl p-3">
               <span className="text-sm font-bold text-violet-300 font-mono">{Math.round(profile.avgSyllables)}</span>
               <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Hece/satır</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 bg-zinc-800/40 border border-zinc-800 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
             <span className="text-xl">🎤</span>
             <div className="min-w-0">
               <p className="text-xs text-zinc-500">Stilin en çok benziyor</p>
@@ -985,7 +1021,7 @@ export default function GhostWriter() {
             </div>
           </div>
 
-          <div className="bg-zinc-800/40 border border-zinc-800 rounded-xl px-4 py-3">
+          <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
             <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Flow Tarzın</p>
             <p className="text-xs text-zinc-300 leading-relaxed">{profile.flowStyle}</p>
           </div>
@@ -1007,14 +1043,16 @@ export default function GhostWriter() {
 
       {/* ── Song Structure Planner ────────────────────────────────────── */}
       <SongStructurePlanner
-        onSectionFocus={(type) => {
-          setFocusSection(type);
+        onSectionFocus={(type, sectionId) => {
+          setActiveSectionId(sectionId);
           const sectionMap: Record<SectionType, SectionValue> = {
             verse: "kita", hook: "nakarat", bridge: "kopru", intro: "kita", outro: "kita"
           };
           setSection(sectionMap[type] ?? "kita");
         }}
-        writtenLineCount={currentLyrics.trim().split("\n").filter(Boolean).length}
+        activeSectionId={activeSectionId}
+        sections={songSections}
+        onSectionsChange={setSongSections}
       />
     </div>
   );

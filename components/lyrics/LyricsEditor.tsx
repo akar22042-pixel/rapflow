@@ -400,6 +400,15 @@ export default function LyricsEditor() {
   const [savedFlash, setSavedFlash]         = useState(false);
   const [showGhostToast, setShowGhostToast] = useState(false);
 
+  // Workshop (Güçlendir) state
+  const [workshopLoading, setWorkshopLoading] = useState(false);
+  const [workshopResults, setWorkshopResults] = useState<Array<{
+    original: string;
+    improved: string;
+    technique: string;
+    explanation: string;
+  }> | null>(null);
+
   const textareaRef       = useRef<HTMLTextAreaElement>(null);
   const popoverAnchorRef  = useRef<HTMLDivElement>(null);
   const autosaveTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -568,6 +577,38 @@ export default function LyricsEditor() {
       setLoadingRhyme(false);
       setLoadingComplete(false);
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Workshop (Güçlendir) — send lines for improvement
+  // ------------------------------------------------------------------
+  async function callWorkshop() {
+    const nonEmpty = lines.filter((l) => l.trim());
+    if (nonEmpty.length === 0) return;
+    setWorkshopLoading(true);
+    setWorkshopResults(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/ghostwriter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "workshop", lines: nonEmpty, bpm: currentBPM }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setWorkshopResults(data.improvements ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Hata oluştu");
+    } finally {
+      setWorkshopLoading(false);
+    }
+  }
+
+  function applyImprovement(original: string, improved: string) {
+    setText((prev) => prev.replace(original, improved));
+    setWorkshopResults((prev) =>
+      prev ? prev.filter((r) => r.original !== original) : null
+    );
   }
 
   // ------------------------------------------------------------------
@@ -865,6 +906,19 @@ export default function LyricsEditor() {
           {loadingComplete ? "Yükleniyor…" : "✍️ Satır Tamamla"}
         </button>
 
+        <button
+          onClick={callWorkshop}
+          disabled={workshopLoading || totalLines === 0}
+          className={[
+            "flex-1 py-2 rounded-xl text-sm font-semibold transition-all border",
+            workshopLoading || totalLines === 0
+              ? "bg-zinc-800 border-zinc-700 text-zinc-600 cursor-not-allowed"
+              : "bg-gradient-to-r from-violet-600 to-purple-700 border-violet-500 text-white hover:scale-[1.01] active:scale-[0.99]",
+          ].join(" ")}
+        >
+          {workshopLoading ? "Analiz ediliyor..." : "Güçlendir"}
+        </button>
+
         {popover && (
           <SuggestionPopover
             popover={popover}
@@ -873,6 +927,43 @@ export default function LyricsEditor() {
           />
         )}
       </div>
+
+      {/* Workshop results */}
+      {workshopResults && workshopResults.length > 0 && (
+        <div className="flex flex-col gap-2 p-4 rounded-xl border bg-violet-500/5 border-violet-500/20">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-violet-400 uppercase tracking-widest font-semibold">Güçlendirme Önerileri</span>
+            <button
+              onClick={() => setWorkshopResults(null)}
+              className="text-[10px] text-zinc-600 hover:text-white transition-colors"
+            >Kapat</button>
+          </div>
+          {workshopResults.map((r, i) => (
+            <div key={i} className="flex flex-col gap-1.5 p-3 rounded-lg bg-white/5 border border-white/10">
+              <div className="flex items-start gap-2">
+                <span className="text-[10px] text-zinc-500 flex-shrink-0 mt-0.5">Orijinal:</span>
+                <p className="text-xs text-zinc-400 font-mono line-through">{r.original}</p>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-[10px] text-emerald-400 flex-shrink-0 mt-0.5">Önerilen:</span>
+                <p className="text-xs text-emerald-300 font-mono">{r.improved}</p>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-300">{r.technique}</span>
+                  <span className="text-[10px] text-zinc-600">{r.explanation}</span>
+                </div>
+                <button
+                  onClick={() => applyImprovement(r.original, r.improved)}
+                  className="text-[10px] px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors font-semibold"
+                >
+                  Uygula
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Error */}
       {error && (
